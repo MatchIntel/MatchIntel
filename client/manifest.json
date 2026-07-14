@@ -1,0 +1,82 @@
+{
+  "manifest_version": 1,
+  "type": "WebApp",
+  "meta": {
+    "name": "MatchIntel",
+    "author": "Liam Katan",
+    "version": "0.2.0",
+    "minimum-overwolf-version": "0.280.0",
+    "description": "Fortnite tournament live-lobby intelligence and analysis.",
+    "icon": "assets/icon.png",
+    "icon_gray": "assets/icon_gray.png"
+  },
+  "permissions": [
+    "GameInfo",
+    "Hotkeys",
+    "profile"
+  ],
+  "data": {
+    "start_window": "background",
+    "block_top_window_navigation": true,
+    "game_targeting": {
+      "type": "dedicated",
+      "game_ids": [
+        21216
+      ]
+    },
+    "game_events": [
+      21216
+    ],
+    "externally_connectable": {
+      "matches": [
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+        "https://*.up.railway.app",
+        "https://*.railway.app"
+      ]
+    },
+    "windows": {
+      "background": {
+        "file": "background.html",
+        "is_background_page": true,
+        "background_optimization": false
+      },
+      "dashboard": {
+        "file": "dashboard.html",
+        "desktop_only": true,
+        "transparent": false,
+        "resizable": true,
+        "size": {
+          "width": 1440,
+          "height": 900
+        },
+        "min_size": {
+          "width": 1120,
+          "height": 720
+        }
+      }
+    },
+    "launch_events": [
+      {
+        "event": "GameLaunch",
+        "event_data": {
+          "game_ids": [
+            21216
+          ]
+        },
+        "start_minimized": true
+      }
+    ],
+    "hotkeys": {
+      "toggle_dashboard": {
+        "title": "Show or hide MatchIntel",
+        "action-type": "custom",
+        "default": "Ctrl+Shift+M",
+        "passthrough": true,
+        "game_ids": [
+          21216
+        ]
+      }
+    }
+  }
+}
