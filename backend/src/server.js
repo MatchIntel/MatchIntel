@@ -1,5 +1,4 @@
 import http from "node:http";
-import { spawn } from "node:child_process";
 import express from "express";
 import helmet from "helmet";
 import cors from "cors";
@@ -13,37 +12,80 @@ import { enrich } from "./enrichment.js";
 import { report } from "./reports.js";
 import * as admin from "./admin.js";
 import { attach } from "./websocket.js";
-
-await new Promise((resolve, reject) => {
-  const process = spawn(process.execPath, ["src/migrate.js"], { stdio: "inherit", env: process.env });
-  process.on("exit", code => code === 0 ? resolve() : reject(new Error(`Migration exited ${code}`)));
-  process.on("error", reject);
-});
+import { migrationState, startMigrationLoop } from "./migrations.js";
 
 const app = express();
 app.disable("x-powered-by");
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors({ origin(origin, callback) {
-  if (!origin || config.corsOrigins.includes("*") || config.corsOrigins.includes(origin)) return callback(null, true);
+  if (!origin || config.corsOrigins.includes("*") || config.corsOrigins.includes(origin)) {
+    return callback(null, true);
+  }
   callback(new Error("CORS origin is not allowed."));
 }}));
 app.use(express.json({ limit: "4mb" }));
-app.use(rateLimit({ windowMs: 60000, limit: 240, standardHeaders: true, legacyHeaders: false }));
 
-app.get("/health", async (_req, res) => {
+// Railway uses this as a liveness check. It intentionally returns 200 as soon as
+// the HTTP process is listening, even while PostgreSQL is reconnecting or a
+// migration is waiting for a lock. Database readiness is exposed at /ready.
+app.get("/health", (_req, res) => {
+  res.status(200).json({
+    status: "ok",
+    service: "matchintel-backend",
+    version: config.latestAppVersion,
+    uptimeSeconds: Math.floor(process.uptime()),
+    database: migrationState.ready ? "ready" : "starting",
+    migrationAttempts: migrationState.attempts
+  });
+});
+
+app.get("/ready", async (_req, res) => {
+  if (!migrationState.ready) {
+    return res.status(503).json({
+      status: "starting",
+      database: "not-ready",
+      migrationAttempts: migrationState.attempts,
+      message: migrationState.lastError || "Waiting for database migrations."
+    });
+  }
+
   try {
     await pool.query("SELECT 1");
-    res.json({ status: "ok", service: "matchintel-backend", version: config.latestAppVersion });
+    res.json({ status: "ready", database: "ready", version: config.latestAppVersion });
   } catch (error) {
-    res.status(503).json({ status: "error", message: error.message });
+    res.status(503).json({
+      status: "not-ready",
+      database: "unavailable",
+      message: String(error.message || error).slice(0, 300)
+    });
   }
 });
+
 app.get("/v1/public/config", (_req, res) => res.json({
   latestVersion: config.latestAppVersion,
   minimumVersion: config.minimumAppVersion,
   maintenance: config.maintenanceMode,
   maintenanceMessage: config.maintenanceMessage
 }));
+
+app.use(rateLimit({
+  windowMs: 60000,
+  limit: 240,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: req => req.path === "/health" || req.path === "/ready"
+}));
+
+// Do not let normal API calls hit a half-migrated schema. Railway can still see
+// the process as healthy while this returns a clear temporary 503 to clients.
+app.use("/v1", (req, res, next) => {
+  if (migrationState.ready) return next();
+  res.setHeader("Retry-After", "5");
+  return res.status(503).json({
+    code: "MI-DATABASE-STARTING",
+    message: "MatchIntel is finishing its database startup. Try again in a few seconds."
+  });
+});
 
 app.post("/v1/licenses/activate", activate);
 app.post("/v1/auth/refresh", refresh);
@@ -78,4 +120,19 @@ app.use((error, _req, res, _next) => {
 
 const server = http.createServer(app);
 app.locals.broadcast = attach(server);
-server.listen(config.port, "0.0.0.0", () => console.log(`MatchIntel backend listening on ${config.port}`));
+server.listen(config.port, "0.0.0.0", () => {
+  console.log(`MatchIntel backend listening on ${config.port}`);
+  void startMigrationLoop();
+});
+
+async function shutdown(signal) {
+  console.log(`[shutdown] ${signal} received.`);
+  server.close(async () => {
+    await pool.end().catch(() => {});
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), 10000).unref();
+}
+
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));

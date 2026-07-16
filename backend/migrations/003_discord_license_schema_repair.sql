@@ -1,6 +1,5 @@
--- Discord-linked license management. This migration intentionally avoids a
--- table-wide constraint validation during deploy so Railway does not wait on a
--- long ACCESS EXCLUSIVE lock while the previous replica is still connected.
+-- Repair migration for deployments where an earlier 002 file was partially
+-- applied or was already recorded before all Discord columns were present.
 
 ALTER TABLE licenses ADD COLUMN IF NOT EXISTS discord_user_id TEXT NULL;
 ALTER TABLE licenses ADD COLUMN IF NOT EXISTS discord_username TEXT NULL;
@@ -17,6 +16,10 @@ WHERE plan IS NULL OR LOWER(plan) NOT IN ('trial', 'lifetime');
 UPDATE licenses
 SET plan = LOWER(plan), updated_at = NOW()
 WHERE plan IS NOT NULL AND plan <> LOWER(plan);
+
+-- Remove the deployment-blocking check constraint from the early 0.4.0 build,
+-- if that build created it. The API already validates Trial/Lifetime plans.
+ALTER TABLE licenses DROP CONSTRAINT IF EXISTS licenses_plan_matchintel_check;
 
 CREATE INDEX IF NOT EXISTS idx_licenses_discord_user
   ON licenses(discord_user_id);
