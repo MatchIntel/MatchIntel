@@ -15,6 +15,11 @@ import { attach } from "./websocket.js";
 import { migrationState, startMigrationLoop } from "./migrations.js";
 
 const app = express();
+
+// Railway places one trusted reverse proxy in front of the backend.
+// This allows Express and express-rate-limit to read the real client IP.
+app.set("trust proxy", 1);
+
 app.disable("x-powered-by");
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors({ origin(origin, callback) {
