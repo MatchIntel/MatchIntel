@@ -6,6 +6,7 @@ import { rateLimit } from "express-rate-limit";
 import { config } from "./config.js";
 import { pool } from "./db.js";
 import { requireAdmin, requireAuth } from "./auth.js";
+import { requireClientVersion, getRuntimeSettings } from "./appSettings.js";
 import { activate, refresh, status as licenseStatus } from "./licenses.js";
 import { ingest, list, one } from "./live.js";
 import { enrich } from "./enrichment.js";
@@ -16,10 +17,10 @@ import { migrationState, startMigrationLoop } from "./migrations.js";
 
 const app = express();
 
-// Railway places one trusted reverse proxy in front of the backend.
-// This allows Express and express-rate-limit to read the real client IP.
+// Railway places one reverse proxy in front of the service. Trusting exactly
+// one hop allows express-rate-limit to identify the real client without making
+// arbitrary forwarded headers trustworthy.
 app.set("trust proxy", 1);
-
 app.disable("x-powered-by");
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors({ origin(origin, callback) {
@@ -30,14 +31,11 @@ app.use(cors({ origin(origin, callback) {
 }}));
 app.use(express.json({ limit: "4mb" }));
 
-// Railway uses this as a liveness check. It intentionally returns 200 as soon as
-// the HTTP process is listening, even while PostgreSQL is reconnecting or a
-// migration is waiting for a lock. Database readiness is exposed at /ready.
 app.get("/health", (_req, res) => {
   res.status(200).json({
     status: "ok",
     service: "matchintel-backend",
-    version: config.latestAppVersion,
+    version: "0.5.0",
     uptimeSeconds: Math.floor(process.uptime()),
     database: migrationState.ready ? "ready" : "starting",
     migrationAttempts: migrationState.attempts
@@ -53,10 +51,9 @@ app.get("/ready", async (_req, res) => {
       message: migrationState.lastError || "Waiting for database migrations."
     });
   }
-
   try {
     await pool.query("SELECT 1");
-    res.json({ status: "ready", database: "ready", version: config.latestAppVersion });
+    res.json({ status: "ready", database: "ready", version: "0.5.0" });
   } catch (error) {
     res.status(503).json({
       status: "not-ready",
@@ -66,12 +63,22 @@ app.get("/ready", async (_req, res) => {
   }
 });
 
-app.get("/v1/public/config", (_req, res) => res.json({
-  latestVersion: config.latestAppVersion,
-  minimumVersion: config.minimumAppVersion,
-  maintenance: config.maintenanceMode,
-  maintenanceMessage: config.maintenanceMessage
-}));
+app.get("/v1/public/config", async (_req, res, next) => {
+  try {
+    const runtime = await getRuntimeSettings();
+    res.json({
+      latestVersion: runtime.version.latestVersion,
+      minimumVersion: runtime.version.minimumVersion,
+      forceUpdate: runtime.version.forceUpdate,
+      updateUrl: runtime.version.updateUrl,
+      updateMessage: runtime.version.message,
+      maintenance: runtime.maintenance.enabled,
+      maintenanceMessage: runtime.maintenance.message
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.use(rateLimit({
   windowMs: 60000,
@@ -81,8 +88,6 @@ app.use(rateLimit({
   skip: req => req.path === "/health" || req.path === "/ready"
 }));
 
-// Do not let normal API calls hit a half-migrated schema. Railway can still see
-// the process as healthy while this returns a clear temporary 503 to clients.
 app.use("/v1", (req, res, next) => {
   if (migrationState.ready) return next();
   res.setHeader("Retry-After", "5");
@@ -94,23 +99,29 @@ app.use("/v1", (req, res, next) => {
 
 app.post("/v1/licenses/activate", activate);
 app.post("/v1/auth/refresh", refresh);
-app.get("/v1/licenses/status", requireAuth, licenseStatus);
+app.get("/v1/licenses/status", requireClientVersion, requireAuth, licenseStatus);
 
-app.post("/v1/live/ingest", requireAuth, ingest);
-app.get("/v1/sessions", requireAuth, list);
-app.get("/v1/sessions/:sessionId", requireAuth, one);
-app.post("/v1/enrichment/players", requireAuth, enrich);
-app.get("/v1/reports/summary", requireAuth, report);
+app.post("/v1/live/ingest", requireClientVersion, requireAuth, ingest);
+app.get("/v1/sessions", requireClientVersion, requireAuth, list);
+app.get("/v1/sessions/:sessionId", requireClientVersion, requireAuth, one);
+app.post("/v1/enrichment/players", requireClientVersion, requireAuth, enrich);
+app.get("/v1/reports/summary", requireClientVersion, requireAuth, report);
 
 app.get("/v1/admin/status", requireAdmin, admin.status);
 app.get("/v1/admin/audit", requireAdmin, admin.auditLog);
+app.get("/v1/admin/version", requireAdmin, admin.versionStatus);
+app.post("/v1/admin/version", requireAdmin, admin.updateVersion);
 app.get("/v1/admin/licenses", requireAdmin, admin.find);
 app.post("/v1/admin/licenses", requireAdmin, admin.create);
+app.post("/v1/admin/licenses/bulk-delete", requireAdmin, admin.deleteBulk);
+app.post("/v1/admin/licenses/bulk-extend", requireAdmin, admin.extendBulk);
 app.get("/v1/admin/licenses/:ref", requireAdmin, admin.one);
+app.delete("/v1/admin/licenses/:ref", requireAdmin, admin.deleteLicense);
 app.get("/v1/admin/licenses/:ref/devices", requireAdmin, admin.devices);
 app.post("/v1/admin/licenses/:ref/revoke", requireAdmin, admin.revoke);
 app.post("/v1/admin/licenses/:ref/restore", requireAdmin, admin.restore);
 app.post("/v1/admin/licenses/:ref/reset-devices", requireAdmin, admin.reset);
+app.post("/v1/admin/licenses/:ref/extend", requireAdmin, admin.extendLicense);
 app.post("/v1/admin/licenses/:ref/convert-lifetime", requireAdmin, admin.convertLifetime);
 app.post("/v1/admin/licenses/:ref/transfer", requireAdmin, admin.transfer);
 app.get("/v1/admin/users/:discordUserId/licenses", requireAdmin, admin.userLicenses);
@@ -120,13 +131,16 @@ app.post("/v1/admin/maintenance", requireAdmin, admin.maintenance);
 
 app.use((error, _req, res, _next) => {
   console.error(error);
-  res.status(500).json({ code: "MI-SERVER", message: "An internal server error occurred." });
+  res.status(error.status || 500).json({
+    code: error.code || "MI-SERVER",
+    message: error.status ? error.message : "An internal server error occurred."
+  });
 });
 
 const server = http.createServer(app);
 app.locals.broadcast = attach(server);
 server.listen(config.port, "0.0.0.0", () => {
-  console.log(`MatchIntel backend listening on ${config.port}`);
+  console.log(`MatchIntel backend 0.5.0 listening on ${config.port}`);
   void startMigrationLoop();
 });
 

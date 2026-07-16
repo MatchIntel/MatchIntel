@@ -1,6 +1,7 @@
 import { query, tx } from "./db.js";
 import { config } from "./config.js";
 import { createLicenseKey, parseDuration, randomUuid, sha256 } from "./security.js";
+import { getRuntimeSettings, setMaintenance, setVersionControl } from "./appSettings.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACTIVE_SQL = "status='active' AND (expires_at IS NULL OR expires_at>NOW())";
@@ -28,6 +29,42 @@ function trialDaysFrom(value) {
     throw httpError(400, "MI-TRIAL-DAYS", "Trial days must be a whole number from 1 to 30.");
   }
   return days;
+}
+
+function extensionDaysFrom(value) {
+  const days = Number(value);
+  if (!Number.isInteger(days) || days < 1 || days > 3650) {
+    throw httpError(400, "MI-EXTENSION-DAYS", "Extension days must be a whole number from 1 to 3650.");
+  }
+  return days;
+}
+
+function bulkScopeFrom(value, allowed) {
+  const scope = clean(value || allowed[0], 30).toLowerCase();
+  if (!allowed.includes(scope)) {
+    throw httpError(400, "MI-BULK-SCOPE", `Scope must be one of: ${allowed.join(", ")}.`);
+  }
+  return scope;
+}
+
+function deletionCondition(scope) {
+  return {
+    all: "TRUE",
+    active: "status='active' AND (expires_at IS NULL OR expires_at>NOW())",
+    revoked: "status='revoked'",
+    expired: "expires_at IS NOT NULL AND expires_at<=NOW()",
+    trial: "plan='trial'",
+    lifetime: "plan='lifetime'"
+  }[scope];
+}
+
+function extensionCondition(scope) {
+  return {
+    all: "plan='trial' AND expires_at IS NOT NULL",
+    active: "plan='trial' AND status='active' AND expires_at>NOW()",
+    revoked: "plan='trial' AND status='revoked'",
+    expired: "plan='trial' AND expires_at IS NOT NULL AND expires_at<=NOW()"
+  }[scope];
 }
 
 function discordIdFrom(value) {
@@ -417,17 +454,190 @@ export async function transfer(req, res) {
   }
 }
 
+
+export async function deleteLicense(req, res) {
+  try {
+    const actor = req.headers["x-admin-actor"] || "admin";
+    const result = await tx(async client => {
+      const current = await resolveLicense(client.query.bind(client), req.params.ref, { forUpdate: true });
+      const [devices, tokens, accesses] = await Promise.all([
+        client.query("SELECT COUNT(*)::int count FROM devices WHERE license_id=$1", [current.id]),
+        client.query("SELECT COUNT(*)::int count FROM refresh_tokens WHERE license_id=$1", [current.id]),
+        client.query("SELECT COUNT(*)::int count FROM session_access WHERE license_id=$1", [current.id])
+      ]);
+      await client.query("DELETE FROM licenses WHERE id=$1", [current.id]);
+      await audit("license.delete", actor, current.id, {
+        keyPrefix: current.key_prefix,
+        plan: current.plan,
+        status: current.status,
+        discordUserId: current.discord_user_id,
+        devicesDeleted: devices.rows[0].count,
+        refreshTokensDeleted: tokens.rows[0].count,
+        sessionAccessDeleted: accesses.rows[0].count
+      }, client.query.bind(client));
+      return {
+        id: current.id,
+        keyPrefix: current.key_prefix,
+        discordUserId: current.discord_user_id,
+        devicesDeleted: devices.rows[0].count,
+        refreshTokensDeleted: tokens.rows[0].count,
+        sessionAccessDeleted: accesses.rows[0].count
+      };
+    });
+    res.json({ ok: true, deleted: result });
+  } catch (error) {
+    sendError(res, error, "MI-LICENSE-DELETE");
+  }
+}
+
+export async function deleteBulk(req, res) {
+  try {
+    const actor = req.headers["x-admin-actor"] || "admin";
+    const confirmation = clean(req.body?.confirmation, 100);
+    if (confirmation !== "DELETE ALL KEYS") {
+      throw httpError(400, "MI-BULK-CONFIRM", "Confirmation must exactly equal DELETE ALL KEYS.");
+    }
+    const scope = bulkScopeFrom(req.body?.scope || "all", ["all", "active", "revoked", "expired", "trial", "lifetime"]);
+    const condition = deletionCondition(scope);
+    const result = await tx(async client => {
+      const counts = await client.query(
+        `SELECT COUNT(*)::int licenses,
+          COALESCE((SELECT COUNT(*)::int FROM devices d WHERE d.license_id IN (SELECT id FROM licenses WHERE ${condition})),0)::int devices,
+          COALESCE((SELECT COUNT(*)::int FROM refresh_tokens r WHERE r.license_id IN (SELECT id FROM licenses WHERE ${condition})),0)::int tokens,
+          COALESCE((SELECT COUNT(*)::int FROM session_access s WHERE s.license_id IN (SELECT id FROM licenses WHERE ${condition})),0)::int accesses
+         FROM licenses WHERE ${condition}`
+      );
+      const deleted = await client.query(`DELETE FROM licenses WHERE ${condition} RETURNING id`);
+      await audit("license.delete_bulk", actor, `scope:${scope}`, {
+        scope,
+        licensesDeleted: deleted.rowCount,
+        devicesDeleted: counts.rows[0].devices,
+        refreshTokensDeleted: counts.rows[0].tokens,
+        sessionAccessDeleted: counts.rows[0].accesses
+      }, client.query.bind(client));
+      return {
+        scope,
+        licensesDeleted: deleted.rowCount,
+        devicesDeleted: counts.rows[0].devices,
+        refreshTokensDeleted: counts.rows[0].tokens,
+        sessionAccessDeleted: counts.rows[0].accesses
+      };
+    });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    sendError(res, error, "MI-LICENSE-BULK-DELETE");
+  }
+}
+
+export async function extendLicense(req, res) {
+  try {
+    const actor = req.headers["x-admin-actor"] || "admin";
+    const days = extensionDaysFrom(req.body?.days);
+    const license = await tx(async client => {
+      const current = await resolveLicense(client.query.bind(client), req.params.ref, { forUpdate: true });
+      if (current.plan !== "trial" || !current.expires_at) {
+        throw httpError(409, "MI-LIFETIME-NO-EXPIRY", "Lifetime keys do not expire and cannot be extended.");
+      }
+      const result = await client.query(
+        `UPDATE licenses
+         SET expires_at=GREATEST(expires_at,NOW()) + ($2::int * INTERVAL '1 day'),updated_at=NOW()
+         WHERE id=$1 RETURNING *`,
+        [current.id, days]
+      );
+      await audit("license.extend", actor, current.id, {
+        days,
+        previousExpiresAt: current.expires_at,
+        newExpiresAt: result.rows[0].expires_at,
+        discordUserId: current.discord_user_id
+      }, client.query.bind(client));
+      return result.rows[0];
+    });
+    res.json({ ok: true, days, license: serializeLicense(license) });
+  } catch (error) {
+    sendError(res, error, "MI-LICENSE-EXTEND");
+  }
+}
+
+export async function extendBulk(req, res) {
+  try {
+    const actor = req.headers["x-admin-actor"] || "admin";
+    const days = extensionDaysFrom(req.body?.days);
+    const scope = bulkScopeFrom(req.body?.scope || "active", ["all", "active", "revoked", "expired"]);
+    const condition = extensionCondition(scope);
+    const result = await tx(async client => {
+      const before = await client.query(
+        `SELECT COUNT(*)::int total,
+          COUNT(*) FILTER (WHERE expires_at<=NOW())::int expired,
+          COUNT(*) FILTER (WHERE status='revoked')::int revoked
+         FROM licenses WHERE ${condition}`
+      );
+      const changed = await client.query(
+        `UPDATE licenses
+         SET expires_at=GREATEST(expires_at,NOW()) + ($1::int * INTERVAL '1 day'),updated_at=NOW()
+         WHERE ${condition}
+         RETURNING id`,
+        [days]
+      );
+      await audit("license.extend_bulk", actor, `scope:${scope}`, {
+        scope,
+        days,
+        licensesExtended: changed.rowCount,
+        previouslyExpired: before.rows[0].expired,
+        revokedIncluded: before.rows[0].revoked
+      }, client.query.bind(client));
+      return {
+        scope,
+        days,
+        licensesExtended: changed.rowCount,
+        previouslyExpired: before.rows[0].expired,
+        revokedIncluded: before.rows[0].revoked
+      };
+    });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    sendError(res, error, "MI-LICENSE-BULK-EXTEND");
+  }
+}
+
+export async function versionStatus(req, res) {
+  try {
+    const settings = await getRuntimeSettings({ fresh: true });
+    res.json({ version: settings.version });
+  } catch (error) {
+    sendError(res, error, "MI-VERSION-STATUS");
+  }
+}
+
+export async function updateVersion(req, res) {
+  try {
+    const actor = req.headers["x-admin-actor"] || "admin";
+    const previous = (await getRuntimeSettings({ fresh: true })).version;
+    const version = await setVersionControl({
+      minimumVersion: req.body?.minimumVersion,
+      latestVersion: req.body?.latestVersion,
+      forceUpdate: req.body?.forceUpdate,
+      updateUrl: req.body?.updateUrl,
+      message: req.body?.message
+    }, actor);
+    await audit("system.version_update", actor, "version_control", { previous, version });
+    res.json({ ok: true, version });
+  } catch (error) {
+    sendError(res, error, "MI-VERSION-UPDATE");
+  }
+}
+
 export async function maintenance(req, res) {
   try {
-    const enabled = !!req.body?.enabled;
-    const message = clean(req.body?.message || config.maintenanceMessage, 500);
-    await query(
-      `INSERT INTO app_settings(key,value) VALUES('maintenance',$1)
-       ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`,
-      [JSON.stringify({ enabled, message })]
-    );
-    await audit("system.maintenance", req.headers["x-admin-actor"] || "admin", "maintenance", { enabled, message });
-    res.json({ enabled, message, note: "Set MAINTENANCE_MODE on Railway for startup-level enforcement." });
+    const actor = req.headers["x-admin-actor"] || "admin";
+    const maintenance = await setMaintenance({
+      enabled: !!req.body?.enabled,
+      message: req.body?.message || config.maintenanceMessage
+    }, actor);
+    await audit("system.maintenance", actor, "maintenance", maintenance);
+    res.json({
+      ...maintenance,
+      note: "This change is live immediately and does not require a Railway redeploy."
+    });
   } catch (error) {
     sendError(res, error);
   }
@@ -452,17 +662,20 @@ export async function auditLog(req, res) {
 
 export async function status(req, res) {
   try {
-    const [active, devicesCount, sessions, byPlan, linked, revoked] = await Promise.all([
+    const [active, total, devicesCount, sessions, byPlan, linked, revoked, runtime] = await Promise.all([
       query(`SELECT COUNT(*)::int count FROM licenses WHERE ${ACTIVE_SQL}`),
+      query("SELECT COUNT(*)::int count FROM licenses"),
       query("SELECT COUNT(*)::int count FROM devices"),
       query("SELECT COUNT(*)::int count FROM sessions"),
       query(`SELECT plan,COUNT(*)::int count FROM licenses WHERE ${ACTIVE_SQL} GROUP BY plan`),
       query("SELECT COUNT(*)::int count FROM licenses WHERE discord_user_id IS NOT NULL"),
-      query("SELECT COUNT(*)::int count FROM licenses WHERE status='revoked'")
+      query("SELECT COUNT(*)::int count FROM licenses WHERE status='revoked'"),
+      getRuntimeSettings()
     ]);
     const plans = Object.fromEntries(byPlan.rows.map(row => [row.plan, row.count]));
     res.json({
       status: "ok",
+      totalLicenses: total.rows[0].count,
       activeLicenses: active.rows[0].count,
       activeTrial: plans.trial || 0,
       activeLifetime: plans.lifetime || 0,
@@ -470,9 +683,13 @@ export async function status(req, res) {
       revokedLicenses: revoked.rows[0].count,
       devices: devicesCount.rows[0].count,
       sessions: sessions.rows[0].count,
-      version: config.latestAppVersion
+      version: runtime.version.latestVersion,
+      minimumVersion: runtime.version.minimumVersion,
+      forceUpdate: runtime.version.forceUpdate,
+      maintenance: runtime.maintenance.enabled
     });
   } catch (error) {
     sendError(res, error);
   }
 }
+
