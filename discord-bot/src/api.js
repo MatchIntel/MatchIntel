@@ -1,14 +1,21 @@
 import { config } from "./config.js";
 
 export async function api(path, options = {}) {
+  const {
+    actor = "discord-bot",
+    timeoutMs = 15000,
+    headers: extraHeaders = {},
+    ...fetchOptions
+  } = options;
+
   const response = await fetch(`${config.backendUrl}${path}`, {
-    ...options,
-    signal: AbortSignal.timeout(15000),
+    ...fetchOptions,
+    signal: AbortSignal.timeout(timeoutMs),
     headers: {
       "Content-Type": "application/json",
       "X-Admin-Key": config.backendAdminKey,
-      "X-Admin-Actor": options.actor || "discord-bot",
-      ...(options.headers || {})
+      "X-Admin-Actor": actor,
+      ...extraHeaders
     }
   });
 

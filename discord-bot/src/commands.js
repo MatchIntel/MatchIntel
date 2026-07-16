@@ -4,7 +4,24 @@ const planChoices = [
   { name: "Trial", value: "trial" },
   { name: "Lifetime", value: "lifetime" }
 ];
-const trialChoices = [1, 3, 7, 14, 30].map(days => ({ name: `${days} day${days === 1 ? "" : "s"}`, value: days }));
+const trialChoices = [1, 3, 7, 14, 30].map(days => ({
+  name: `${days} day${days === 1 ? "" : "s"}`,
+  value: days
+}));
+const deletionScopes = [
+  { name: "Every key", value: "all" },
+  { name: "Revoked keys only", value: "revoked" },
+  { name: "Expired trials only", value: "expired" },
+  { name: "Currently active keys", value: "active" },
+  { name: "All trial keys", value: "trial" },
+  { name: "All lifetime keys", value: "lifetime" }
+];
+const extensionScopes = [
+  { name: "All trial keys", value: "all" },
+  { name: "Active trials only", value: "active" },
+  { name: "Expired trials only", value: "expired" },
+  { name: "Revoked trials only", value: "revoked" }
+];
 
 export const commands = [
   new SlashCommandBuilder()
@@ -75,12 +92,46 @@ export const commands = [
     .addUserOption(option => option.setName("user").setDescription("New Discord owner").setRequired(true)),
 
   new SlashCommandBuilder()
+    .setName("deletekey")
+    .setDescription("Permanently delete one MatchIntel key")
+    .addStringOption(option => option.setName("license").setDescription("License UUID, full key, or prefix").setRequired(true))
+    .addStringOption(option => option.setName("confirmation").setDescription("Type DELETE KEY exactly").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("deleteallkeys")
+    .setDescription("Permanently delete a selected group of keys")
+    .addStringOption(option => option.setName("scope").setDescription("Which keys to delete").setRequired(true).addChoices(...deletionScopes))
+    .addStringOption(option => option.setName("confirmation").setDescription("Type DELETE ALL KEYS exactly").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("extendkey")
+    .setDescription("Add days to one trial key")
+    .addStringOption(option => option.setName("license").setDescription("License UUID, full key, or prefix").setRequired(true))
+    .addIntegerOption(option => option.setName("days").setDescription("Days to add").setRequired(true).setMinValue(1).setMaxValue(3650)),
+
+  new SlashCommandBuilder()
+    .setName("extendallkeys")
+    .setDescription("Add days to a selected group of trial keys")
+    .addIntegerOption(option => option.setName("days").setDescription("Days to add").setRequired(true).setMinValue(1).setMaxValue(3650))
+    .addStringOption(option => option.setName("scope").setDescription("Which trial keys to extend").setRequired(true).addChoices(...extensionScopes)),
+
+  new SlashCommandBuilder()
     .setName("maintenance")
     .setDescription("Set MatchIntel maintenance state")
     .addBooleanOption(option => option.setName("enabled").setDescription("Enable or disable maintenance").setRequired(true))
     .addStringOption(option => option.setName("message").setDescription("Maintenance message").setMaxLength(500)),
 
-  new SlashCommandBuilder().setName("systemstatus").setDescription("Show backend, license, device, and session totals"),
+  new SlashCommandBuilder()
+    .setName("setversion")
+    .setDescription("Set MatchIntel minimum/latest versions and force-update state")
+    .addStringOption(option => option.setName("minimum").setDescription("Minimum allowed version, such as 0.3.9").setRequired(true))
+    .addBooleanOption(option => option.setName("force_update").setDescription("Block clients below minimum").setRequired(true))
+    .addStringOption(option => option.setName("latest").setDescription("Newest available version; defaults to minimum"))
+    .addStringOption(option => option.setName("update_url").setDescription("Page or download URL shown to outdated users").setMaxLength(1000))
+    .addStringOption(option => option.setName("message").setDescription("Message shown to outdated users").setMaxLength(500)),
+
+  new SlashCommandBuilder().setName("versionstatus").setDescription("Show current MatchIntel version-control settings"),
+  new SlashCommandBuilder().setName("systemstatus").setDescription("Show backend, license, device, session, and version totals"),
 
   new SlashCommandBuilder()
     .setName("auditlog")

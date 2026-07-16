@@ -1,9 +1,4 @@
-import {
-  Client,
-  GatewayIntentBits,
-  REST,
-  Routes
-} from "discord.js";
+import { Client, GatewayIntentBits, REST, Routes } from "discord.js";
 import { config } from "./config.js";
 import { commands } from "./commands.js";
 import { api } from "./api.js";
@@ -11,8 +6,10 @@ import { canUse, accessLevel } from "./access.js";
 import { COLORS, discordTime, embed, licenseFields, licenseLabel, truncate } from "./format.js";
 
 const ADMIN_COMMANDS = new Set([
-  "revokekey", "revokeuser", "restorekey", "convertkey", "transferkey", "maintenance", "auditlog"
+  "revokekey", "revokeuser", "restorekey", "convertkey", "transferkey",
+  "deletekey", "extendkey", "extendallkeys", "maintenance", "setversion", "auditlog"
 ]);
+const OWNER_ONLY_COMMANDS = new Set(["deleteallkeys", "setversion"]);
 
 await new REST({ version: "10" })
   .setToken(config.token)
@@ -37,21 +34,16 @@ async function handleGenKey(interaction) {
   const trialDays = interaction.options.getInteger("trial_days") || config.defaultTrialDays;
   const maxDevices = interaction.options.getInteger("devices") || 1;
   const note = interaction.options.getString("note") || "";
-
   const result = await api("/v1/admin/licenses", {
     method: "POST",
     actor: interaction.user.id,
     body: JSON.stringify({
-      plan,
-      trialDays,
-      maxDevices,
-      note,
+      plan, trialDays, maxDevices, note,
       discordUserId: target.id,
       discordUsername: username(target),
       issuedByDiscordId: interaction.user.id
     })
   });
-
   const expires = result.license.expiresAt ? discordTime(result.license.expiresAt) : "Lifetime";
   const customerEmbed = embed("Your MatchIntel license", [
     { name: "License key", value: `\`${result.licenseKey}\`` },
@@ -61,14 +53,9 @@ async function handleGenKey(interaction) {
     { name: "Linked Discord account", value: `<@${target.id}>` },
     { name: "Keep this private", value: "Do not post or share this key. It is linked to your Discord account." }
   ], COLORS.purple);
-
   let delivery = "Sent by DM.";
-  try {
-    await target.send({ embeds: [customerEmbed] });
-  } catch {
-    delivery = "DM failed. Copy the key below and send it to the customer securely.";
-  }
-
+  try { await target.send({ embeds: [customerEmbed] }); }
+  catch { delivery = "DM failed. Copy the key below and send it securely."; }
   return interaction.editReply({ embeds: [embed("MatchIntel key generated", [
     { name: "Customer", value: `${target} (\`${target.id}\`)` },
     { name: "Key", value: `\`${result.licenseKey}\`` },
@@ -111,8 +98,7 @@ async function handleListKeys(interaction) {
 }
 
 async function handleResetDevices(interaction) {
-  const subcommand = interaction.options.getSubcommand();
-  if (subcommand === "user") {
+  if (interaction.options.getSubcommand() === "user") {
     const target = interaction.options.getUser("user", true);
     const result = await api(`/v1/admin/users/${target.id}/reset-devices`, {
       method: "POST", actor: interaction.user.id, body: "{}"
@@ -133,8 +119,7 @@ async function handleResetDevices(interaction) {
     { name: "License ID", value: `\`${result.license.id}\`` },
     { name: "Owner", value: result.license.discordUserId ? `<@${result.license.discordUserId}>` : "Unlinked" },
     { name: "Devices removed", value: String(result.devicesRemoved), inline: true },
-    { name: "Sessions revoked", value: String(result.refreshTokensRevoked), inline: true },
-    { name: "Result", value: "The key can be activated on a new device immediately." }
+    { name: "Sessions revoked", value: String(result.refreshTokensRevoked), inline: true }
   ], COLORS.green)] });
 }
 
@@ -200,6 +185,69 @@ async function handleTransfer(interaction) {
   return interaction.editReply({ embeds: [embed("Key ownership transferred", licenseFields(result.license), COLORS.purple)] });
 }
 
+async function handleDeleteKey(interaction) {
+  if (interaction.options.getString("confirmation", true) !== "DELETE KEY") {
+    throw new Error("Confirmation must exactly equal DELETE KEY.");
+  }
+  const ref = interaction.options.getString("license", true);
+  const result = await api(`/v1/admin/licenses/${encodeURIComponent(ref)}`, {
+    method: "DELETE", actor: interaction.user.id
+  });
+  return interaction.editReply({ embeds: [embed("Key permanently deleted", [
+    { name: "License ID", value: `\`${result.deleted.id}\`` },
+    { name: "Key prefix", value: `\`${result.deleted.keyPrefix}…\`` },
+    { name: "Owner", value: result.deleted.discordUserId ? `<@${result.deleted.discordUserId}>` : "Unlinked" },
+    { name: "Devices deleted", value: String(result.deleted.devicesDeleted), inline: true },
+    { name: "Sessions deleted", value: String(result.deleted.refreshTokensDeleted), inline: true },
+    { name: "Warning", value: "This deletion is permanent and cannot be restored." }
+  ], COLORS.red)] });
+}
+
+async function handleDeleteAll(interaction) {
+  const confirmation = interaction.options.getString("confirmation", true);
+  if (confirmation !== "DELETE ALL KEYS") throw new Error("Confirmation must exactly equal DELETE ALL KEYS.");
+  const scope = interaction.options.getString("scope", true);
+  const result = await api("/v1/admin/licenses/bulk-delete", {
+    method: "POST",
+    actor: interaction.user.id,
+    timeoutMs: 60000,
+    body: JSON.stringify({ scope, confirmation })
+  });
+  return interaction.editReply({ embeds: [embed("Bulk key deletion completed", [
+    { name: "Scope", value: result.scope, inline: true },
+    { name: "Licenses deleted", value: String(result.licensesDeleted), inline: true },
+    { name: "Devices deleted", value: String(result.devicesDeleted), inline: true },
+    { name: "Refresh sessions deleted", value: String(result.refreshTokensDeleted), inline: true },
+    { name: "Warning", value: "Deleted keys are permanently removed and cannot be restored." }
+  ], COLORS.red)] });
+}
+
+async function handleExtendKey(interaction) {
+  const ref = interaction.options.getString("license", true);
+  const days = interaction.options.getInteger("days", true);
+  const result = await api(`/v1/admin/licenses/${encodeURIComponent(ref)}/extend`, {
+    method: "POST", actor: interaction.user.id, body: JSON.stringify({ days })
+  });
+  return interaction.editReply({ embeds: [embed(`Trial extended by ${days} days`, licenseFields(result.license), COLORS.green)] });
+}
+
+async function handleExtendAll(interaction) {
+  const days = interaction.options.getInteger("days", true);
+  const scope = interaction.options.getString("scope", true);
+  const result = await api("/v1/admin/licenses/bulk-extend", {
+    method: "POST", actor: interaction.user.id, timeoutMs: 60000,
+    body: JSON.stringify({ days, scope })
+  });
+  return interaction.editReply({ embeds: [embed("Bulk trial extension completed", [
+    { name: "Scope", value: result.scope, inline: true },
+    { name: "Days added", value: String(result.days), inline: true },
+    { name: "Licenses extended", value: String(result.licensesExtended), inline: true },
+    { name: "Previously expired", value: String(result.previouslyExpired), inline: true },
+    { name: "Revoked included", value: String(result.revokedIncluded), inline: true },
+    { name: "Note", value: "Lifetime keys were skipped because they never expire. Extending a revoked key does not restore it." }
+  ], COLORS.green)] });
+}
+
 async function handleMaintenance(interaction) {
   const result = await api("/v1/admin/maintenance", {
     method: "POST",
@@ -212,15 +260,54 @@ async function handleMaintenance(interaction) {
   return interaction.editReply({ embeds: [embed("Maintenance updated", [
     { name: "State", value: result.enabled ? "Enabled" : "Disabled", inline: true },
     { name: "Message", value: result.message || "No message" },
-    { name: "Railway note", value: result.note }
+    { name: "Result", value: result.note }
   ], result.enabled ? COLORS.yellow : COLORS.green)] });
+}
+
+async function handleSetVersion(interaction) {
+  const minimumVersion = interaction.options.getString("minimum", true).trim();
+  const latestVersion = (interaction.options.getString("latest") || minimumVersion).trim();
+  const forceUpdate = interaction.options.getBoolean("force_update", true);
+  const updateUrl = interaction.options.getString("update_url") || "";
+  const message = interaction.options.getString("message") || "";
+  const result = await api("/v1/admin/version", {
+    method: "POST",
+    actor: interaction.user.id,
+    body: JSON.stringify({ minimumVersion, latestVersion, forceUpdate, updateUrl, message })
+  });
+  const version = result.version;
+  return interaction.editReply({ embeds: [embed("MatchIntel version control updated", [
+    { name: "Minimum allowed", value: `\`${version.minimumVersion}\``, inline: true },
+    { name: "Latest available", value: `\`${version.latestVersion}\``, inline: true },
+    { name: "Force update", value: version.forceUpdate ? "Enabled" : "Disabled", inline: true },
+    { name: "Update URL", value: version.updateUrl || "Not configured" },
+    { name: "User message", value: version.message },
+    { name: "Important", value: "Clients with the 0.3.9+ force-update controller will immediately block when below the minimum version." }
+  ], version.forceUpdate ? COLORS.red : COLORS.green)] });
+}
+
+async function handleVersionStatus(interaction) {
+  const result = await api("/v1/admin/version", { actor: interaction.user.id });
+  const version = result.version;
+  return interaction.editReply({ embeds: [embed("MatchIntel version control", [
+    { name: "Minimum allowed", value: `\`${version.minimumVersion}\``, inline: true },
+    { name: "Latest available", value: `\`${version.latestVersion}\``, inline: true },
+    { name: "Force update", value: version.forceUpdate ? "Enabled" : "Disabled", inline: true },
+    { name: "Update URL", value: version.updateUrl || "Not configured" },
+    { name: "Message", value: version.message },
+    { name: "Last changed", value: version.updatedAt ? discordTime(version.updatedAt) : "Using Railway defaults" }
+  ], version.forceUpdate ? COLORS.yellow : COLORS.blue)] });
 }
 
 async function handleSystemStatus(interaction) {
   const result = await api("/v1/admin/status", { actor: interaction.user.id });
   return interaction.editReply({ embeds: [embed("MatchIntel system status", [
     { name: "Backend", value: result.status, inline: true },
-    { name: "Version", value: result.version, inline: true },
+    { name: "Latest version", value: result.version, inline: true },
+    { name: "Minimum version", value: result.minimumVersion, inline: true },
+    { name: "Force update", value: result.forceUpdate ? "Enabled" : "Disabled", inline: true },
+    { name: "Maintenance", value: result.maintenance ? "Enabled" : "Disabled", inline: true },
+    { name: "Total licenses", value: String(result.totalLicenses), inline: true },
     { name: "Active licenses", value: String(result.activeLicenses), inline: true },
     { name: "Lifetime", value: String(result.activeLifetime), inline: true },
     { name: "Trials", value: String(result.activeTrial), inline: true },
@@ -246,11 +333,11 @@ async function handleAuditLog(interaction) {
 
 async function handleHelp(interaction) {
   return interaction.editReply({ embeds: [embed("MatchIntel bot commands", [
-    { name: "Key management", value: "`/genkey` `/keyinfo` `/finduser` `/listkeys` `/resetdevices` `/devices`" },
-    { name: "Administrator commands", value: "`/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey`" },
-    { name: "System commands", value: "`/systemstatus` `/maintenance` `/auditlog`" },
+    { name: "Staff", value: "`/genkey` `/keyinfo` `/finduser` `/listkeys` `/resetdevices` `/devices` `/versionstatus` `/systemstatus`" },
+    { name: "Admin", value: "`/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog`" },
+    { name: "Owner only", value: "`/deleteallkeys` `/setversion`" },
     { name: "Your access", value: accessLevel(interaction) },
-    { name: "Security", value: "Every generated key is linked to the selected Discord account. All replies are private." }
+    { name: "Deletion safety", value: "Revoking disables a key but keeps its record. Deleting permanently removes it and cannot be undone." }
   ])] });
 }
 
@@ -266,7 +353,13 @@ const handlers = {
   restorekey: handleRestore,
   convertkey: handleConvert,
   transferkey: handleTransfer,
+  deletekey: handleDeleteKey,
+  deleteallkeys: handleDeleteAll,
+  extendkey: handleExtendKey,
+  extendallkeys: handleExtendAll,
   maintenance: handleMaintenance,
+  setversion: handleSetVersion,
+  versionstatus: handleVersionStatus,
   systemstatus: handleSystemStatus,
   auditlog: handleAuditLog,
   bothelp: handleHelp
@@ -279,6 +372,9 @@ client.on("interactionCreate", async interaction => {
   }
   if (ADMIN_COMMANDS.has(interaction.commandName) && !canUse(interaction, "admin")) {
     return deny(interaction, "This command requires the configured MatchIntel admin role.");
+  }
+  if (OWNER_ONLY_COMMANDS.has(interaction.commandName) && accessLevel(interaction) !== "owner") {
+    return deny(interaction, "This destructive global command is restricted to MatchIntel owner IDs.");
   }
 
   await interaction.deferReply({ ephemeral: true });
@@ -294,7 +390,7 @@ client.on("interactionCreate", async interaction => {
 });
 
 client.once("ready", () => {
-  console.log(`MatchIntel bot 0.4.0 logged in as ${client.user.tag}`);
+  console.log(`MatchIntel bot 0.5.0 logged in as ${client.user.tag}`);
   console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
   if (!config.staffRoles.size) console.warn("BOT_STAFF_ROLE_IDS is empty. Only owners/admin-role users can access commands.");
 });
