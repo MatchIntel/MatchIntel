@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="MatchIntel is a professional Fortnite tournament intelligence dashboard with live lobby context, player data, match history and fact-based reports.">
+  <meta name="theme-color" content="#050b16">
+  <title>MatchIntel — Fortnite Tournament Intelligence</title>
+  <link rel="icon" href="/assets/icon.png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="background-grid" aria-hidden="true"></div>
+  <div class="background-glow glow-one" aria-hidden="true"></div>
+  <div class="background-glow glow-two" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="MatchIntel home">
+      <img src="/assets/icon.png" alt="">
+      <span>MATCH<strong>INTEL</strong></span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="#features">Features</a>
+      <a href="#access">Access</a>
+      <a href="#how-it-works">How it works</a>
+      <a href="#support">Support</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a class="button compact discord discord-link" href="#support">
+      <svg class="discord-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 5.34A17.1 17.1 0 0 0 15.27 4l-.52 1.06a15.6 15.6 0 0 0-5.5 0L8.73 4A17.1 17.1 0 0 0 4.5 5.34C1.82 9.28 1.1 13.12 1.46 16.9a17.2 17.2 0 0 0 5.19 2.63l1.27-1.73a10.9 10.9 0 0 1-2-.96l.5-.38c3.86 1.8 8.05 1.8 11.86 0l.51.38a12 12 0 0 1-2 .96l1.27 1.73a17.1 17.1 0 0 0 5.18-2.63c.43-4.38-.73-8.18-3.74-11.56ZM8.52 14.6c-1.15 0-2.1-1.06-2.1-2.36s.93-2.37 2.1-2.37c1.18 0 2.12 1.07 2.1 2.37 0 1.3-.93 2.36-2.1 2.36Zm6.96 0c-1.16 0-2.1-1.06-2.1-2.36s.92-2.37 2.1-2.37c1.17 0 2.12 1.07 2.1 2.37 0 1.3-.92 2.36-2.1 2.36Z"/></svg>
+      Join Discord
+    </a>
+  </header>
+
+  <main id="top">
+    <section class="hero section-shell">
+      <div class="hero-copy reveal">
+        <div class="status-badge"><i></i><span id="serviceStatus">SYSTEMS ONLINE</span></div>
+        <p class="eyebrow">FORTNITE TOURNAMENT INTELLIGENCE</p>
+        <h1>Read the lobby.<br><em>Make better decisions.</em></h1>
+        <p class="hero-lead">MatchIntel brings supported tournament lobby data, team strength, player PR, earnings, eliminations, history and honest reports into one focused dashboard.</p>
+        <div class="hero-actions">
+          <a class="button primary lifetime-link" href="#access">Buy lifetime</a>
+          <a class="button discord" href="/trial/start">
+            <svg class="discord-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 5.34A17.1 17.1 0 0 0 15.27 4l-.52 1.06a15.6 15.6 0 0 0-5.5 0L8.73 4A17.1 17.1 0 0 0 4.5 5.34C1.82 9.28 1.1 13.12 1.46 16.9a17.2 17.2 0 0 0 5.19 2.63l1.27-1.73a10.9 10.9 0 0 1-2-.96l.5-.38c3.86 1.8 8.05 1.8 11.86 0l.51.38a12 12 0 0 1-2 .96l1.27 1.73a17.1 17.1 0 0 0 5.18-2.63c.43-4.38-.73-8.18-3.74-11.56ZM8.52 14.6c-1.15 0-2.1-1.06-2.1-2.36s.93-2.37 2.1-2.37c1.18 0 2.12 1.07 2.1 2.37 0 1.3-.93 2.36-2.1 2.36Zm6.96 0c-1.16 0-2.1-1.06-2.1-2.36s.92-2.37 2.1-2.37c1.17 0 2.12 1.07 2.1 2.37 0 1.3-.92 2.36-2.1 2.36Z"/></svg>
+            Get free trial
+          </a>
+        </div>
+        <div class="hero-proof">
+          <div><strong>Live</strong><span>lobby context</span></div>
+          <div><strong>1</strong><span>trial per device</span></div>
+          <div><strong>Discord</strong><span>verified claims</span></div>
+        </div>
+      </div>
+
+      <div class="dashboard-preview reveal" aria-label="MatchIntel dashboard preview">
+        <div class="preview-topbar">
+          <div class="mini-brand"><img src="/assets/icon.png" alt=""><span>MATCH<strong>INTEL</strong></span></div>
+          <div class="live-pill"><i></i> LIVE SESSION</div>
+        </div>
+        <div class="preview-body">
+          <aside class="preview-sidebar"><span class="active">⌂</span><span>♙</span><span>▣</span><span>◷</span><span>⚙</span></aside>
+          <div class="preview-content">
+            <div class="metric-row">
+              <article><small>PLAYERS</small><strong>100</strong><em>50 teams</em></article>
+              <article><small>ALIVE</small><strong>74</strong><em>38 teams</em></article>
+              <article><small>AVG PR</small><strong>8,420</strong><em>full lobby</em></article>
+            </div>
+            <div class="preview-table">
+              <div class="table-head"><span>TEAM</span><span>PR</span><span>EARNINGS</span><span>STATUS</span></div>
+              <div class="table-row featured"><span><b>Team 14</b><small>Player One / Player Two</small></span><span>12,440</span><span>$48,200</span><span class="alive-text">● Alive</span></div>
+              <div class="table-row"><span><b>Team 07</b><small>Player Three / Player Four</small></span><span>9,810</span><span>$16,750</span><span class="alive-text">● Alive</span></div>
+              <div class="table-row faded"><span><b>Team 22</b><small>Player Five / Player Six</small></span><span>7,205</span><span>$4,900</span><span>Eliminated</span></div>
+            </div>
+            <div class="event-strip"><i></i><span>Live event feed and session updates</span><b>Updated now</b></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="trust-strip">
+      <span>TOURNAMENT-FOCUSED</span><span>LOW-OVERHEAD DASHBOARD</span><span>DEVICE-BOUND LICENSING</span><span>DISCORD SUPPORT</span>
+    </section>
+
+    <section id="features" class="section-shell section-block">
+      <div class="section-heading reveal">
+        <p class="eyebrow">ONE CONNECTED SYSTEM</p>
+        <h2>Everything important, organized.</h2>
+        <p>MatchIntel turns supported data into a readable tournament view while clearly labeling unavailable information and limitations.</p>
+      </div>
+      <div class="feature-grid">
+        <article class="reveal"><div class="feature-icon">◎</div><h3>Lobby overview</h3><p>Group players into teams and compare status, eliminations, PR and earnings from one live table.</p></article>
+        <article class="reveal"><div class="feature-icon">↗</div><h3>Player intelligence</h3><p>Review individual and combined team strength with transparent handling for missing provider data.</p></article>
+        <article class="reveal"><div class="feature-icon">◷</div><h3>Tournament history</h3><p>Store completed sessions in your Railway backend and revisit past tournament performance.</p></article>
+        <article class="reveal"><div class="feature-icon">▣</div><h3>Fact-based reports</h3><p>Generate summaries based on measurable results instead of unsupported or invented coaching claims.</p></article>
+        <article class="reveal"><div class="feature-icon">⚡</div><h3>Performance controls</h3><p>Keep the dashboard lightweight with local operation, configurable polling and performance options.</p></article>
+        <article class="reveal"><div class="feature-icon">◇</div><h3>Secure access</h3><p>Use server-verified keys, device limits, Discord administration, maintenance and version control.</p></article>
+      </div>
+    </section>
+
+    <section id="access" class="section-shell section-block access-section">
+      <div class="section-heading left reveal">
+        <p class="eyebrow">GET MATCHINTEL</p>
+        <h2>Start free or own it for life.</h2>
+        <p>Lifetime checkout, free-trial length, Discord invite, downloads and support links are all controlled through Railway variables.</p>
+      </div>
+      <div class="access-grid">
+        <article class="access-card paid-card reveal">
+          <div class="recommended">BEST VALUE</div>
+          <span class="card-label">LIFETIME ACCESS</span>
+          <h3>MatchIntel Lifetime</h3>
+          <div class="price" id="lifetimePrice">Lifetime access</div>
+          <p class="card-description">Permanent access on the licensed device limit, managed through your existing MatchIntel backend.</p>
+          <ul>
+            <li>Full lobby and player dashboard</li>
+            <li>PR and earnings enrichment</li>
+            <li>History, reports and updates</li>
+            <li>Discord support and key management</li>
+          </ul>
+          <a class="button primary full lifetime-link" href="#">Buy lifetime access</a>
+          <a class="text-link discord-link" href="#support">Questions before buying? Join Discord →</a>
+        </article>
+
+        <article class="access-card trial-card reveal">
+          <span class="card-label">ONE-TIME FREE TRIAL</span>
+          <h3>Try MatchIntel first</h3>
+          <div class="price"><span id="trialDays">3</span> days</div>
+          <p class="card-description">No Device ID is entered on the website. Sign in with Discord, receive your key, and paste it into the normal MatchIntel activation screen.</p>
+          <ul>
+            <li>One claim per Discord account</li>
+            <li>First activation automatically binds the device</li>
+            <li>A device that used a trial cannot use another trial key</li>
+            <li>No changes or trial buttons inside the app</li>
+          </ul>
+          <a class="button discord full" href="/trial/start">
+            <svg class="discord-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 5.34A17.1 17.1 0 0 0 15.27 4l-.52 1.06a15.6 15.6 0 0 0-5.5 0L8.73 4A17.1 17.1 0 0 0 4.5 5.34C1.82 9.28 1.1 13.12 1.46 16.9a17.2 17.2 0 0 0 5.19 2.63l1.27-1.73a10.9 10.9 0 0 1-2-.96l.5-.38c3.86 1.8 8.05 1.8 11.86 0l.51.38a12 12 0 0 1-2 .96l1.27 1.73a17.1 17.1 0 0 0 5.18-2.63c.43-4.38-.73-8.18-3.74-11.56ZM8.52 14.6c-1.15 0-2.1-1.06-2.1-2.36s.93-2.37 2.1-2.37c1.18 0 2.12 1.07 2.1 2.37 0 1.3-.93 2.36-2.1 2.36Zm6.96 0c-1.16 0-2.1-1.06-2.1-2.36s.92-2.37 2.1-2.37c1.17 0 2.12 1.07 2.1 2.37 0 1.3-.92 2.36-2.1 2.36Z"/></svg>
+            Sign in with Discord
+          </a>
+          <p class="microcopy">Discord permission requested: basic identity only.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="how-it-works" class="section-shell steps-section">
+      <div class="section-heading reveal">
+        <p class="eyebrow">FREE-TRIAL PROTECTION</p>
+        <h2>Simple for users. Hard to abuse.</h2>
+      </div>
+      <div class="steps-grid">
+        <article class="reveal"><span>01</span><h3>Verify Discord</h3><p>The website uses Discord OAuth to identify the account and allows only one website trial claim per Discord user.</p></article>
+        <article class="reveal"><span>02</span><h3>Receive the key</h3><p>The backend creates a normal MatchIntel trial key and displays it once on the website for the user to copy.</p></article>
+        <article class="reveal"><span>03</span><h3>Automatic device check</h3><p>When the unchanged app activates the key, the backend records its hashed Device ID. Another trial key on that device is rejected.</p></article>
+      </div>
+      <div class="security-note reveal"><strong>Privacy-first device tracking</strong><span>The raw Device ID is never stored by the trial system. MatchIntel stores the same stable peppered hash already used by its licensing backend.</span></div>
+    </section>
+
+    <section id="support" class="section-shell section-block support-section">
+      <div class="section-heading reveal">
+        <p class="eyebrow">HELP WHEN YOU NEED IT</p>
+        <h2>Support built into the website.</h2>
+        <p>Users can reach your Discord, download MatchIntel, open your support page or contact the email you configure in Railway.</p>
+      </div>
+      <div class="support-grid">
+        <a class="support-card discord-card discord-link reveal" href="#">
+          <div class="support-icon"><svg class="discord-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 5.34A17.1 17.1 0 0 0 15.27 4l-.52 1.06a15.6 15.6 0 0 0-5.5 0L8.73 4A17.1 17.1 0 0 0 4.5 5.34C1.82 9.28 1.1 13.12 1.46 16.9a17.2 17.2 0 0 0 5.19 2.63l1.27-1.73a10.9 10.9 0 0 1-2-.96l.5-.38c3.86 1.8 8.05 1.8 11.86 0l.51.38a12 12 0 0 1-2 .96l1.27 1.73a17.1 17.1 0 0 0 5.18-2.63c.43-4.38-.73-8.18-3.74-11.56ZM8.52 14.6c-1.15 0-2.1-1.06-2.1-2.36s.93-2.37 2.1-2.37c1.18 0 2.12 1.07 2.1 2.37 0 1.3-.93 2.36-2.1 2.36Zm6.96 0c-1.16 0-2.1-1.06-2.1-2.36s.92-2.37 2.1-2.37c1.17 0 2.12 1.07 2.1 2.37 0 1.3-.92 2.36-2.1 2.36Z"/></svg></div>
+          <div><span>COMMUNITY & SUPPORT</span><h3>Join the Discord</h3><p>Get announcements, setup help and direct support.</p></div><b>→</b>
+        </a>
+        <a class="support-card download-card download-link reveal" href="#">
+          <div class="support-icon">↓</div><div><span>GET THE APP</span><h3>Download MatchIntel</h3><p>Send users to your latest approved build or download page.</p></div><b>→</b>
+        </a>
+        <a class="support-card support-link reveal" id="supportLink" href="#">
+          <div class="support-icon">?</div><div><span>CONTACT</span><h3>Contact support</h3><p>Open your configured ticket page, Discord channel or email.</p></div><b>→</b>
+        </a>
+      </div>
+    </section>
+
+    <section id="faq" class="section-shell section-block faq-section">
+      <div class="section-heading left reveal"><p class="eyebrow">COMMON QUESTIONS</p><h2>Everything users need to know.</h2></div>
+      <div class="faq-list">
+        <details class="reveal"><summary>Do I enter my Device ID on the website?</summary><p>No. The website only verifies Discord and issues a trial key. The unchanged MatchIntel app sends its normal Device ID during activation, and the backend performs the device check there.</p></details>
+        <details class="reveal"><summary>Can someone use a second Discord account for another trial?</summary><p>They may be able to claim another key with another Discord account, but the backend rejects that key when it is activated on a device that has already used a MatchIntel website trial.</p></details>
+        <details class="reveal"><summary>Does the website store raw Device IDs?</summary><p>No. The backend stores only a stable cryptographic hash created with your existing private DEVICE_HASH_PEPPER variable.</p></details>
+        <details class="reveal"><summary>How does lifetime purchasing work?</summary><p>The Buy Lifetime buttons use the LIFETIME_BUY_URL Railway variable, so you can point every button to Stripe, Sellix, Lemon Squeezy or another checkout page without editing code.</p></details>
+        <details class="reveal"><summary>What Discord permissions are requested?</summary><p>Only the OAuth identify scope is requested. It provides the stable Discord user ID and basic profile needed to enforce one website trial per account.</p></details>
+      </div>
+    </section>
+
+    <section class="final-cta reveal">
+      <div><p class="eyebrow">READY TO START?</p><h2>Bring the whole lobby into focus.</h2></div>
+      <div><a class="button primary lifetime-link" href="#">Buy lifetime</a><a class="button discord" href="/trial/start"><svg class="discord-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 5.34A17.1 17.1 0 0 0 15.27 4l-.52 1.06a15.6 15.6 0 0 0-5.5 0L8.73 4A17.1 17.1 0 0 0 4.5 5.34C1.82 9.28 1.1 13.12 1.46 16.9a17.2 17.2 0 0 0 5.19 2.63l1.27-1.73a10.9 10.9 0 0 1-2-.96l.5-.38c3.86 1.8 8.05 1.8 11.86 0l.51.38a12 12 0 0 1-2 .96l1.27 1.73a17.1 17.1 0 0 0 5.18-2.63c.43-4.38-.73-8.18-3.74-11.56ZM8.52 14.6c-1.15 0-2.1-1.06-2.1-2.36s.93-2.37 2.1-2.37c1.18 0 2.12 1.07 2.1 2.37 0 1.3-.93 2.36-2.1 2.36Zm6.96 0c-1.16 0-2.1-1.06-2.1-2.36s.92-2.37 2.1-2.37c1.17 0 2.12 1.07 2.1 2.37 0 1.3-.92 2.36-2.1 2.36Z"/></svg>Get free trial</a></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <a class="brand" href="#top"><img src="/assets/icon.png" alt=""><span>MATCH<strong>INTEL</strong></span></a>
+    <p>Independent tournament companion. Not affiliated with or endorsed by Epic Games.</p>
+    <div><a class="discord-link" href="#">Discord</a><a class="download-link" href="#">Download</a><a class="support-link" href="#">Support</a><a href="/privacy.html">Privacy</a><a href="/terms.html">Terms</a></div>
+    <small>© <span id="year"></span> MatchIntel</small>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
