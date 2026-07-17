@@ -24,8 +24,8 @@
     if (!response.ok) throw new Error("Config unavailable");
     const config = await response.json();
 
-    document.title = `${config.siteName || "MatchIntel"} — Fortnite Tournament Intelligence`;
-    document.getElementById("trialDays").textContent = String(config.freeTrialDays || 3);
+    document.title = `${config.siteName || "MatchIntel"} — See the Whole Lobby`;
+    document.getElementById("trialDays").textContent = String(config.freeTrialDays || 2);
     document.getElementById("lifetimePrice").textContent = config.lifetimePriceLabel || "Lifetime access";
 
     setLinks(".discord-link", config.discordInviteUrl, "#support");
@@ -42,8 +42,11 @@
   }
 
   try {
-    const health = await fetch("/health", { cache: "no-store" });
-    if (health.ok) document.getElementById("serviceStatus").textContent = "SYSTEMS ONLINE";
+    const statusResponse = await fetch("/api/status", { cache: "no-store" });
+    const status = statusResponse.ok ? await statusResponse.json() : null;
+    document.getElementById("serviceStatus").textContent = status?.trials === "online"
+      ? "TRIAL SYSTEM ONLINE"
+      : "TRIALS TEMPORARILY OFFLINE";
   } catch {
     document.getElementById("serviceStatus").textContent = "WEBSITE ONLINE";
   }

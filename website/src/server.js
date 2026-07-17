@@ -53,6 +53,28 @@ app.get("/health", (_req, res) => {
   });
 });
 
+
+app.get("/api/status", async (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+
+  try {
+    const response = await fetch(`${config.backendUrl}/health`, {
+      signal: AbortSignal.timeout(5_000),
+      headers: { Accept: "application/json" }
+    });
+    const health = await readJson(response);
+    const configurationReady = health?.configuration !== "incomplete";
+    const databaseReady = health?.database === "ready" || health?.status === "ready";
+
+    return res.status(200).json({
+      website: "online",
+      trials: response.ok && configurationReady && databaseReady ? "online" : "offline"
+    });
+  } catch {
+    return res.status(200).json({ website: "online", trials: "offline" });
+  }
+});
+
 app.get("/api/site-config", (_req, res) => {
   res.setHeader("Cache-Control", "public, max-age=300");
   res.json({
@@ -158,13 +180,18 @@ app.get("/auth/discord/callback", trialLimiter, async (req, res) => {
     });
     const issued = await readJson(issueResponse);
     if (!issueResponse.ok || !issued?.licenseKey) {
-      throw httpError(issueResponse.status, friendlyBackendMessage(issued));
+      console.warn("[trial] Backend rejected trial request", {
+        status: issueResponse.status,
+        code: issued?.code,
+        missingEnvironment: issued?.missingEnvironment
+      });
+      throw httpError(issueResponse.status, friendlyBackendMessage(issued, issueResponse.status));
     }
 
     res.status(200).send(renderResult({
       title: "Free Trial Ready",
       heading: `Your ${issued.trialDays || config.freeTrialDays}-day free trial is ready`,
-      message: "Copy this key and paste it into MatchIntel. The first device that activates it becomes permanently linked to this trial, and a device that has used any MatchIntel website trial cannot activate another one.",
+      message: "Copy the key below and paste it into MatchIntel to activate your trial.",
       tone: "success",
       licenseKey: issued.licenseKey,
       expiresAt: issued.license?.expiresAt,
@@ -258,11 +285,26 @@ async function readJson(response) {
   catch { return { message: text.slice(0, 300) }; }
 }
 
-function friendlyBackendMessage(body) {
+function friendlyBackendMessage(body, status) {
   if (body?.code === "MI-TRIAL-DISCORD-USED") {
-    return "This Discord account has already received a MatchIntel free trial.";
+    return "This Discord account has already used its MatchIntel free trial.";
   }
-  return body?.message || "The MatchIntel backend could not create the free trial.";
+  if (body?.code === "MI-DATABASE-STARTING") {
+    return "The trial system is starting up. Wait a moment and try again.";
+  }
+  if (body?.code === "MI-CONFIG-INCOMPLETE") {
+    return "Free trials are temporarily unavailable. Please try again shortly or join the Discord for help.";
+  }
+  if (status === 401 || status === 403) {
+    return "Free trials are temporarily unavailable. Please contact MatchIntel support.";
+  }
+  if (status === 429) {
+    return "Too many attempts were made. Wait a few minutes and try again.";
+  }
+  if (status >= 500) {
+    return "The trial system is temporarily unavailable. Please try again shortly.";
+  }
+  return body?.message || "The free trial could not be created. Please try again or contact support.";
 }
 
 function escapeHtml(value) {
@@ -284,7 +326,6 @@ function renderResult({ title, heading, message, tone, licenseKey, expiresAt, di
     <div class="result-meta">
       <span>Discord</span><strong>${escapeHtml(discordUsername || "Connected")}</strong>
       <span>Expires</span><strong>${escapeHtml(expiresAt ? new Date(expiresAt).toLocaleString("en-US", { timeZone: "UTC", timeZoneName: "short" }) : "Trial period")}</strong>
-      <span>Device protection</span><strong>Applied automatically on first activation</strong>
     </div>` : "";
 
   return `<!doctype html>
@@ -301,7 +342,7 @@ function renderResult({ title, heading, message, tone, licenseKey, expiresAt, di
   <main class="result-card ${tone === "success" ? "success" : "failure"}">
     <a class="result-brand" href="/"><img src="/assets/icon.png" alt=""><span>MATCH<strong>INTEL</strong></span></a>
     <div class="result-symbol">${tone === "success" ? "✓" : "!"}</div>
-    <p class="eyebrow">${tone === "success" ? "ACCESS CREATED" : "ACTION REQUIRED"}</p>
+    <p class="eyebrow">${tone === "success" ? "TRIAL READY" : "TRIAL UNAVAILABLE"}</p>
     <h1>${escapeHtml(heading)}</h1>
     <p class="result-message">${escapeHtml(message)}</p>
     ${keyBlock}

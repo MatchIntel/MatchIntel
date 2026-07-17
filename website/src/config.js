@@ -27,5 +27,5 @@ export const config = {
   lifetimePriceLabel: process.env.LIFETIME_PRICE_LABEL?.trim()
     || process.env.PRODUCT_PRICE_LABEL?.trim()
     || "Lifetime access",
-  freeTrialDays: Math.max(1, Math.min(30, Number(process.env.FREE_TRIAL_DAYS || 3)))
+  freeTrialDays: Math.max(1, Math.min(30, Number(process.env.FREE_TRIAL_DAYS || 2)))
 };
