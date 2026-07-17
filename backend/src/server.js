@@ -3,49 +3,54 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import { rateLimit } from "express-rate-limit";
-import { config, configurationReady, missingRequiredEnvironment } from "./config.js";
+import { config, missingRequiredEnvironment } from "./config.js";
 import { pool } from "./db.js";
 import { requireAdmin, requireAuth, requireWebsite } from "./auth.js";
 import { requireClientVersion, getRuntimeSettings } from "./appSettings.js";
 import { activate, refresh, status as licenseStatus } from "./licenses.js";
 import { ingest, list, one } from "./live.js";
-import { enrich } from "./enrichment.js";
+import { enrich, enrichmentQueueStatus, enrichmentWorkerState, startEnrichmentWorker, stopEnrichmentWorker } from "./enrichment.js";
 import { report } from "./reports.js";
 import * as admin from "./admin.js";
 import { attach } from "./websocket.js";
 import { issueWebsiteTrial } from "./freeTrials.js";
 import { migrationState, startMigrationLoop } from "./migrations.js";
 
-const VERSION = "0.5.2";
 const app = express();
 
+// Railway places one reverse proxy in front of the service. Trusting exactly
+// one hop allows express-rate-limit to identify the real client without making
+// arbitrary forwarded headers trustworthy.
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 app.use(helmet({ crossOriginResourcePolicy: false }));
-app.use(cors({
-  origin(origin, callback) {
-    if (!origin || config.corsOrigins.includes("*") || config.corsOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    return callback(new Error("CORS origin is not allowed."));
+app.use(cors({ origin(origin, callback) {
+  if (!origin || config.corsOrigins.includes("*") || config.corsOrigins.includes(origin)) {
+    return callback(null, true);
   }
-}));
+  callback(new Error("CORS origin is not allowed."));
+}}));
 app.use(express.json({ limit: "4mb" }));
 
-// Railway must be able to reach this endpoint even if an environment variable
-// was accidentally omitted. That prevents a configuration typo from looking
-// like a broken Docker image and exposes the missing variable names safely.
 app.get("/health", (_req, res) => {
   const missingEnvironment = missingRequiredEnvironment();
   res.status(200).json({
     status: "ok",
     service: "matchintel-backend",
-    version: VERSION,
+    version: "0.6.0",
     uptimeSeconds: Math.floor(process.uptime()),
     configuration: missingEnvironment.length ? "incomplete" : "ready",
     missingEnvironment,
     database: migrationState.ready ? "ready" : "starting",
-    migrationAttempts: migrationState.attempts
+    migrationAttempts: migrationState.attempts,
+    enrichment: {
+      provider: config.enrichment.provider,
+      workerRunning: enrichmentWorkerState.running,
+      blockedUntil: enrichmentWorkerState.blockedUntil,
+      lastSuccessAt: enrichmentWorkerState.lastSuccessAt,
+      leaderboardSeededAt: enrichmentWorkerState.leaderboardSeededAt,
+      leaderboardSeedCount: enrichmentWorkerState.leaderboardSeedCount
+    }
   });
 });
 
@@ -59,7 +64,6 @@ app.get("/ready", async (_req, res) => {
       message: "Add the listed variables to the Railway backend service."
     });
   }
-
   if (!migrationState.ready) {
     return res.status(503).json({
       status: "starting",
@@ -68,12 +72,11 @@ app.get("/ready", async (_req, res) => {
       message: migrationState.lastError || "Waiting for database migrations."
     });
   }
-
   try {
     await pool.query("SELECT 1");
-    return res.json({ status: "ready", database: "ready", version: VERSION });
+    res.json({ status: "ready", database: "ready", version: "0.6.0" });
   } catch (error) {
-    return res.status(503).json({
+    res.status(503).json({
       status: "not-ready",
       database: "unavailable",
       message: String(error.message || error).slice(0, 300)
@@ -81,16 +84,31 @@ app.get("/ready", async (_req, res) => {
   }
 });
 
+app.get("/v1/public/config", async (_req, res, next) => {
+  try {
+    const runtime = await getRuntimeSettings();
+    res.json({
+      latestVersion: runtime.version.latestVersion,
+      minimumVersion: runtime.version.minimumVersion,
+      forceUpdate: runtime.version.forceUpdate,
+      updateUrl: runtime.version.updateUrl,
+      updateMessage: runtime.version.message,
+      maintenance: runtime.maintenance.enabled,
+      maintenanceMessage: runtime.maintenance.message
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use(rateLimit({
   windowMs: 60000,
-  limit: 240,
+  limit: 1200,
   standardHeaders: true,
   legacyHeaders: false,
   skip: req => req.path === "/health" || req.path === "/ready"
 }));
 
-// Do not let protected routes execute with empty secrets or a missing database.
-// /health remains available so Railway can deploy and show a useful diagnosis.
 app.use("/v1", (_req, res, next) => {
   const missingEnvironment = missingRequiredEnvironment();
   if (!missingEnvironment.length) return next();
@@ -111,23 +129,6 @@ app.use("/v1", (_req, res, next) => {
   });
 });
 
-app.get("/v1/public/config", async (_req, res, next) => {
-  try {
-    const runtime = await getRuntimeSettings();
-    return res.json({
-      latestVersion: runtime.version.latestVersion,
-      minimumVersion: runtime.version.minimumVersion,
-      forceUpdate: runtime.version.forceUpdate,
-      updateUrl: runtime.version.updateUrl,
-      updateMessage: runtime.version.message,
-      maintenance: runtime.maintenance.enabled,
-      maintenanceMessage: runtime.maintenance.message
-    });
-  } catch (error) {
-    return next(error);
-  }
-});
-
 app.post("/v1/licenses/activate", activate);
 app.post("/v1/internal/free-trials", requireWebsite, issueWebsiteTrial);
 app.post("/v1/auth/refresh", refresh);
@@ -137,6 +138,7 @@ app.post("/v1/live/ingest", requireClientVersion, requireAuth, ingest);
 app.get("/v1/sessions", requireClientVersion, requireAuth, list);
 app.get("/v1/sessions/:sessionId", requireClientVersion, requireAuth, one);
 app.post("/v1/enrichment/players", requireClientVersion, requireAuth, enrich);
+app.get("/v1/enrichment/status", requireClientVersion, requireAuth, enrichmentQueueStatus);
 app.get("/v1/reports/summary", requireClientVersion, requireAuth, report);
 
 app.get("/v1/admin/status", requireAdmin, admin.status);
@@ -163,7 +165,7 @@ app.post("/v1/admin/maintenance", requireAdmin, admin.maintenance);
 
 app.use((error, _req, res, _next) => {
   console.error(error);
-  return res.status(error.status || 500).json({
+  res.status(error.status || 500).json({
     code: error.code || "MI-SERVER",
     message: error.status ? error.message : "An internal server error occurred."
   });
@@ -171,23 +173,23 @@ app.use((error, _req, res, _next) => {
 
 const server = http.createServer(app);
 app.locals.broadcast = attach(server);
-
 server.listen(config.port, "0.0.0.0", () => {
-  console.log(`MatchIntel backend ${VERSION} listening on 0.0.0.0:${config.port}`);
-
+  console.log(`MatchIntel backend 0.6.0 listening on 0.0.0.0:${config.port}`);
   const missingEnvironment = missingRequiredEnvironment();
   if (missingEnvironment.length) {
     console.error(`[configuration] Missing required Railway variable(s): ${missingEnvironment.join(", ")}`);
-    console.error("[configuration] /health will stay online, but API routes will remain disabled until these variables are added and the service redeploys.");
+    console.error("[configuration] /health remains online; API routes are disabled until the variables are added.");
     return;
   }
-
-  void startMigrationLoop();
+  void startMigrationLoop().then(() => startEnrichmentWorker()).catch(error => {
+    console.error(`[startup] Enrichment worker failed to start: ${error.message}`);
+  });
 });
 
 async function shutdown(signal) {
   console.log(`[shutdown] ${signal} received.`);
   server.close(async () => {
+    stopEnrichmentWorker();
     await pool.end().catch(() => {});
     process.exit(0);
   });
@@ -197,7 +199,6 @@ async function shutdown(signal) {
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 process.once("SIGINT", () => void shutdown("SIGINT"));
 
-// Keep startup failures visible in Railway logs instead of silently stopping.
 process.on("unhandledRejection", error => {
   console.error("[unhandledRejection]", error);
 });

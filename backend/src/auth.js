@@ -35,9 +35,6 @@ export async function requireAuth(req, res, next) {
 }
 
 export function requireAdmin(req, res, next) {
-  if (!config.adminApiKey) {
-    return res.status(503).json({ code: "MI-CONFIG-ADMIN-KEY", message: "ADMIN_API_KEY is not configured on the backend service." });
-  }
   const supplied = req.headers["x-admin-key"] || "";
   if (!supplied || !equal(supplied, config.adminApiKey)) {
     return res.status(403).json({ code: "MI-ADMIN-FORBIDDEN", message: "Administrator access is required." });
@@ -46,9 +43,6 @@ export function requireAdmin(req, res, next) {
 }
 
 export function requireWebsite(req, res, next) {
-  if (!config.websiteApiKey) {
-    return res.status(503).json({ code: "MI-CONFIG-WEBSITE-KEY", message: "WEBSITE_API_KEY is not configured on the backend service." });
-  }
   const supplied = req.headers["x-website-key"] || "";
   if (!supplied || !equal(supplied, config.websiteApiKey)) {
     return res.status(403).json({ code: "MI-WEBSITE-FORBIDDEN", message: "Website service access is required." });

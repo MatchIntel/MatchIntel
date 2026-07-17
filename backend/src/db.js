@@ -2,11 +2,8 @@ import pg from "pg";
 import { config } from "./config.js";
 
 const { Pool } = pg;
-
-// A placeholder URL lets the HTTP process start and answer /health even when
-// Railway variables have not been configured yet. Database routes are blocked
-// by server.js until all required variables are present, so this URL is never
-// used during a correctly configured deployment.
+// Keep /health available even before Railway variables are complete. Protected
+// routes and migrations remain disabled until the real DATABASE_URL exists.
 const connectionString = config.databaseUrl || "postgresql://invalid:invalid@127.0.0.1:1/invalid";
 
 export const pool = new Pool({
