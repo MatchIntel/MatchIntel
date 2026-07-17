@@ -1,0 +1,26 @@
+MATCHINTEL BACKEND — RAILWAY HEALTHCHECK FIX
+
+1. Replace the contents of your GitHub repository's backend folder with the
+   contents of this backend folder.
+2. Commit and push the change.
+3. Keep Railway Root Directory set to /backend.
+4. Railway should redeploy automatically.
+
+REQUIRED RAILWAY BACKEND VARIABLES
+- DATABASE_URL
+- JWT_SECRET
+- ADMIN_API_KEY
+- WEBSITE_API_KEY
+- DEVICE_HASH_PEPPER
+
+Also normally used:
+- DATABASE_SSL=false (Railway private Postgres connection)
+- FREE_TRIAL_DAYS=3
+- CORS_ORIGINS=*
+
+WEBSITE_API_KEY must be the exact same value on the website service and the
+backend service.
+
+This fix keeps /health online even when a required variable is missing. Open
+https://YOUR-BACKEND-DOMAIN/health after deployment. It will safely list only
+missing variable NAMES, never their values.

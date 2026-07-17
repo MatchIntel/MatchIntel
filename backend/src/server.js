@@ -3,7 +3,7 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import { rateLimit } from "express-rate-limit";
-import { config } from "./config.js";
+import { config, configurationReady, missingRequiredEnvironment } from "./config.js";
 import { pool } from "./db.js";
 import { requireAdmin, requireAuth, requireWebsite } from "./auth.js";
 import { requireClientVersion, getRuntimeSettings } from "./appSettings.js";
@@ -16,34 +16,50 @@ import { attach } from "./websocket.js";
 import { issueWebsiteTrial } from "./freeTrials.js";
 import { migrationState, startMigrationLoop } from "./migrations.js";
 
+const VERSION = "0.5.2";
 const app = express();
 
-// Railway places one reverse proxy in front of the service. Trusting exactly
-// one hop allows express-rate-limit to identify the real client without making
-// arbitrary forwarded headers trustworthy.
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 app.use(helmet({ crossOriginResourcePolicy: false }));
-app.use(cors({ origin(origin, callback) {
-  if (!origin || config.corsOrigins.includes("*") || config.corsOrigins.includes(origin)) {
-    return callback(null, true);
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || config.corsOrigins.includes("*") || config.corsOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error("CORS origin is not allowed."));
   }
-  callback(new Error("CORS origin is not allowed."));
-}}));
+}));
 app.use(express.json({ limit: "4mb" }));
 
+// Railway must be able to reach this endpoint even if an environment variable
+// was accidentally omitted. That prevents a configuration typo from looking
+// like a broken Docker image and exposes the missing variable names safely.
 app.get("/health", (_req, res) => {
+  const missingEnvironment = missingRequiredEnvironment();
   res.status(200).json({
     status: "ok",
     service: "matchintel-backend",
-    version: "0.5.1",
+    version: VERSION,
     uptimeSeconds: Math.floor(process.uptime()),
+    configuration: missingEnvironment.length ? "incomplete" : "ready",
+    missingEnvironment,
     database: migrationState.ready ? "ready" : "starting",
     migrationAttempts: migrationState.attempts
   });
 });
 
 app.get("/ready", async (_req, res) => {
+  const missingEnvironment = missingRequiredEnvironment();
+  if (missingEnvironment.length) {
+    return res.status(503).json({
+      status: "not-ready",
+      configuration: "incomplete",
+      missingEnvironment,
+      message: "Add the listed variables to the Railway backend service."
+    });
+  }
+
   if (!migrationState.ready) {
     return res.status(503).json({
       status: "starting",
@@ -52,32 +68,16 @@ app.get("/ready", async (_req, res) => {
       message: migrationState.lastError || "Waiting for database migrations."
     });
   }
+
   try {
     await pool.query("SELECT 1");
-    res.json({ status: "ready", database: "ready", version: "0.5.1" });
+    return res.json({ status: "ready", database: "ready", version: VERSION });
   } catch (error) {
-    res.status(503).json({
+    return res.status(503).json({
       status: "not-ready",
       database: "unavailable",
       message: String(error.message || error).slice(0, 300)
     });
-  }
-});
-
-app.get("/v1/public/config", async (_req, res, next) => {
-  try {
-    const runtime = await getRuntimeSettings();
-    res.json({
-      latestVersion: runtime.version.latestVersion,
-      minimumVersion: runtime.version.minimumVersion,
-      forceUpdate: runtime.version.forceUpdate,
-      updateUrl: runtime.version.updateUrl,
-      updateMessage: runtime.version.message,
-      maintenance: runtime.maintenance.enabled,
-      maintenanceMessage: runtime.maintenance.message
-    });
-  } catch (error) {
-    next(error);
   }
 });
 
@@ -89,13 +89,43 @@ app.use(rateLimit({
   skip: req => req.path === "/health" || req.path === "/ready"
 }));
 
-app.use("/v1", (req, res, next) => {
+// Do not let protected routes execute with empty secrets or a missing database.
+// /health remains available so Railway can deploy and show a useful diagnosis.
+app.use("/v1", (_req, res, next) => {
+  const missingEnvironment = missingRequiredEnvironment();
+  if (!missingEnvironment.length) return next();
+  res.setHeader("Retry-After", "30");
+  return res.status(503).json({
+    code: "MI-CONFIG-INCOMPLETE",
+    message: "The MatchIntel backend is missing required Railway variables.",
+    missingEnvironment
+  });
+});
+
+app.use("/v1", (_req, res, next) => {
   if (migrationState.ready) return next();
   res.setHeader("Retry-After", "5");
   return res.status(503).json({
     code: "MI-DATABASE-STARTING",
     message: "MatchIntel is finishing its database startup. Try again in a few seconds."
   });
+});
+
+app.get("/v1/public/config", async (_req, res, next) => {
+  try {
+    const runtime = await getRuntimeSettings();
+    return res.json({
+      latestVersion: runtime.version.latestVersion,
+      minimumVersion: runtime.version.minimumVersion,
+      forceUpdate: runtime.version.forceUpdate,
+      updateUrl: runtime.version.updateUrl,
+      updateMessage: runtime.version.message,
+      maintenance: runtime.maintenance.enabled,
+      maintenanceMessage: runtime.maintenance.message
+    });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 app.post("/v1/licenses/activate", activate);
@@ -133,7 +163,7 @@ app.post("/v1/admin/maintenance", requireAdmin, admin.maintenance);
 
 app.use((error, _req, res, _next) => {
   console.error(error);
-  res.status(error.status || 500).json({
+  return res.status(error.status || 500).json({
     code: error.code || "MI-SERVER",
     message: error.status ? error.message : "An internal server error occurred."
   });
@@ -141,8 +171,17 @@ app.use((error, _req, res, _next) => {
 
 const server = http.createServer(app);
 app.locals.broadcast = attach(server);
+
 server.listen(config.port, "0.0.0.0", () => {
-  console.log(`MatchIntel backend 0.5.1 listening on ${config.port}`);
+  console.log(`MatchIntel backend ${VERSION} listening on 0.0.0.0:${config.port}`);
+
+  const missingEnvironment = missingRequiredEnvironment();
+  if (missingEnvironment.length) {
+    console.error(`[configuration] Missing required Railway variable(s): ${missingEnvironment.join(", ")}`);
+    console.error("[configuration] /health will stay online, but API routes will remain disabled until these variables are added and the service redeploys.");
+    return;
+  }
+
   void startMigrationLoop();
 });
 
@@ -157,3 +196,8 @@ async function shutdown(signal) {
 
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 process.once("SIGINT", () => void shutdown("SIGINT"));
+
+// Keep startup failures visible in Railway logs instead of silently stopping.
+process.on("unhandledRejection", error => {
+  console.error("[unhandledRejection]", error);
+});

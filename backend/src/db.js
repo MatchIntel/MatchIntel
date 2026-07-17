@@ -2,8 +2,15 @@ import pg from "pg";
 import { config } from "./config.js";
 
 const { Pool } = pg;
+
+// A placeholder URL lets the HTTP process start and answer /health even when
+// Railway variables have not been configured yet. Database routes are blocked
+// by server.js until all required variables are present, so this URL is never
+// used during a correctly configured deployment.
+const connectionString = config.databaseUrl || "postgresql://invalid:invalid@127.0.0.1:1/invalid";
+
 export const pool = new Pool({
-  connectionString: config.databaseUrl,
+  connectionString,
   ssl: config.databaseSsl ? { rejectUnauthorized: false } : false,
   max: 10,
   idleTimeoutMillis: 30000,
@@ -12,7 +19,6 @@ export const pool = new Pool({
 });
 
 pool.on("error", error => {
-  // Idle-client errors should be logged, not allowed to crash the Railway process.
   console.error(`[database] Idle client error: ${error.message}`);
 });
 
