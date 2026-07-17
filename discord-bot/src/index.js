@@ -7,7 +7,7 @@ import { COLORS, discordTime, embed, licenseFields, licenseLabel, truncate } fro
 
 const ADMIN_COMMANDS = new Set([
   "revokekey", "revokeuser", "restorekey", "convertkey", "transferkey",
-  "deletekey", "extendkey", "extendallkeys", "maintenance", "setversion", "auditlog"
+  "deletekey", "reissuekey", "extendkey", "extendallkeys", "maintenance", "setversion", "auditlog"
 ]);
 const OWNER_ONLY_COMMANDS = new Set(["deleteallkeys", "setversion"]);
 
@@ -68,9 +68,49 @@ async function handleGenKey(interaction) {
 }
 
 async function handleKeyInfo(interaction) {
-  const ref = interaction.options.getString("license", true);
-  const result = await api(`/v1/admin/licenses/${encodeURIComponent(ref)}`, { actor: interaction.user.id });
-  return interaction.editReply({ embeds: [embed("MatchIntel key information", licenseFields(result.license), COLORS.blue)] });
+  const reference = interaction.options.getString("reference", true);
+  const result = await api("/v1/admin/keyinfo", {
+    method: "POST",
+    actor: interaction.user.id,
+    body: JSON.stringify({ reference })
+  });
+
+  if (result.licenses.length === 1) {
+    return interaction.editReply({ embeds: [embed(
+      result.matchType === "device" ? "MatchIntel key found by Device ID" : "MatchIntel key information",
+      licenseFields(result.licenses[0], { showRecoveryNote: true }),
+      COLORS.blue
+    )] });
+  }
+
+  const fields = result.licenses.slice(0, 10).map((license, index) => ({
+    name: `License ${index + 1}`,
+    value: truncate([
+      license.fullKey ? `Key: \`${license.fullKey}\`` : `Key: \`${license.keyPrefix}…\` (legacy; use /reissuekey)`,
+      `ID: \`${license.id}\``,
+      `Plan: ${license.plan} • Status: ${license.isUsable ? "Active" : license.status}`,
+      `Owner: ${license.discordUserId ? `<@${license.discordUserId}>` : "Unlinked"}`
+    ].join("\n"), 1024)
+  }));
+  return interaction.editReply({ embeds: [embed(
+    `Device ID is linked to ${result.licenses.length} licenses`,
+    fields,
+    COLORS.yellow
+  )] });
+}
+
+async function handleReissueKey(interaction) {
+  const reference = interaction.options.getString("reference", true);
+  const confirmation = interaction.options.getString("confirmation", true);
+  const result = await api("/v1/admin/licenses/reissue", {
+    method: "POST",
+    actor: interaction.user.id,
+    body: JSON.stringify({ reference, confirmation })
+  });
+  return interaction.editReply({ embeds: [embed("MatchIntel key reissued", [
+    ...licenseFields(result.license),
+    { name: "Important", value: "The old key no longer activates new devices. Existing device bindings were kept." }
+  ], COLORS.green)] });
 }
 
 async function handleFindUser(interaction) {
@@ -334,7 +374,7 @@ async function handleAuditLog(interaction) {
 async function handleHelp(interaction) {
   return interaction.editReply({ embeds: [embed("MatchIntel bot commands", [
     { name: "Staff", value: "`/genkey` `/keyinfo` `/finduser` `/listkeys` `/resetdevices` `/devices` `/versionstatus` `/systemstatus`" },
-    { name: "Admin", value: "`/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog`" },
+    { name: "Admin", value: "`/reissuekey` `/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog`" },
     { name: "Owner only", value: "`/deleteallkeys` `/setversion`" },
     { name: "Your access", value: accessLevel(interaction) },
     { name: "Deletion safety", value: "Revoking disables a key but keeps its record. Deleting permanently removes it and cannot be undone." }
@@ -344,6 +384,7 @@ async function handleHelp(interaction) {
 const handlers = {
   genkey: handleGenKey,
   keyinfo: handleKeyInfo,
+  reissuekey: handleReissueKey,
   finduser: handleFindUser,
   listkeys: handleListKeys,
   resetdevices: handleResetDevices,
@@ -390,7 +431,7 @@ client.on("interactionCreate", async interaction => {
 });
 
 client.once("ready", () => {
-  console.log(`MatchIntel bot 0.5.0 logged in as ${client.user.tag}`);
+  console.log(`MatchIntel bot 0.5.1 logged in as ${client.user.tag}`);
   console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
   if (!config.staffRoles.size) console.warn("BOT_STAFF_ROLE_IDS is empty. Only owners/admin-role users can access commands.");
 });

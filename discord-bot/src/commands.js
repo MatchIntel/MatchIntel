@@ -35,8 +35,14 @@ export const commands = [
 
   new SlashCommandBuilder()
     .setName("keyinfo")
-    .setDescription("Show detailed information for a key")
-    .addStringOption(option => option.setName("license").setDescription("License UUID, full key, or key prefix").setRequired(true)),
+    .setDescription("Find a key using a license value or Device ID")
+    .addStringOption(option => option.setName("reference").setDescription("Full key, key prefix, license ID, or Device ID").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("reissuekey")
+    .setDescription("Replace an older key and reveal the new full key")
+    .addStringOption(option => option.setName("reference").setDescription("License ID, full key, key prefix, or Device ID").setRequired(true))
+    .addStringOption(option => option.setName("confirmation").setDescription("Type REISSUE KEY exactly").setRequired(true)),
 
   new SlashCommandBuilder()
     .setName("finduser")
