@@ -1,6 +1,6 @@
 import { query, tx } from "./db.js";
 import { config } from "./config.js";
-import { createLicenseKey, parseDuration, randomUuid, sha256 } from "./security.js";
+import { createLicenseKey, decryptLicenseKey, encryptLicenseKey, hashDevice, parseDuration, randomUuid, sha256 } from "./security.js";
 import { getRuntimeSettings, setMaintenance, setVersionControl } from "./appSettings.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -75,11 +75,13 @@ function discordIdFrom(value) {
   return id;
 }
 
-function serializeLicense(row) {
+function serializeLicense(row, { includeFullKey = false } = {}) {
   if (!row) return null;
+  const fullKey = includeFullKey ? decryptLicenseKey(row.key_ciphertext) : null;
   return {
     id: row.id,
     keyPrefix: row.key_prefix,
+    ...(includeFullKey ? { fullKey, fullKeyAvailable: Boolean(fullKey) } : {}),
     plan: row.plan,
     status: row.status,
     expiresAt: row.expires_at,
@@ -137,6 +139,37 @@ async function resolveLicense(executor, ref, { forUpdate = false } = {}) {
   return result.rows[0];
 }
 
+async function licensesForDevice(executor, rawDeviceId, { forUpdate = false } = {}) {
+  const deviceId = clean(rawDeviceId, 300);
+  if (!deviceId) throw httpError(400, "MI-DEVICE-REF", "A Device ID is required.");
+  const result = await executor(
+    `SELECT l.*,
+      (SELECT COUNT(*)::int FROM devices all_devices WHERE all_devices.license_id=l.id) AS device_count,
+      d.device_name AS matched_device_name,
+      d.first_seen_at AS matched_device_first_seen_at,
+      d.last_seen_at AS matched_device_last_seen_at
+     FROM devices d
+     JOIN licenses l ON l.id=d.license_id
+     WHERE d.device_hash=$1
+     ORDER BY d.last_seen_at DESC${forUpdate ? " FOR UPDATE OF l" : ""}`,
+    [hashDevice(deviceId)]
+  );
+  return result.rows;
+}
+
+async function resolveLicenseOrDevice(executor, reference, { forUpdate = false } = {}) {
+  try {
+    return { matchType: "license", rows: [await resolveLicense(executor, reference, { forUpdate })] };
+  } catch (error) {
+    if (error.code !== "MI-LICENSE-NOT-FOUND") throw error;
+  }
+  const rows = await licensesForDevice(executor, reference, { forUpdate });
+  if (!rows.length) {
+    throw httpError(404, "MI-KEYINFO-NOT-FOUND", "No license or bound device matched that value.");
+  }
+  return { matchType: "device", rows };
+}
+
 function sendError(res, error, fallbackCode = "MI-ADMIN") {
   res.status(error.status || 400).json({ code: error.code || fallbackCode, message: error.message });
 }
@@ -160,11 +193,11 @@ export async function create(req, res) {
     await tx(async client => {
       await client.query(
         `INSERT INTO licenses(
-          id,key_hash,key_prefix,plan,expires_at,max_devices,features,note,
+          id,key_hash,key_prefix,key_ciphertext,plan,expires_at,max_devices,features,note,
           discord_user_id,discord_username,issued_by_discord_id
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
-          id, sha256(key), key.slice(0, 12), plan, expiresAt, maxDevices,
+          id, sha256(key), key.slice(0, 12), encryptLicenseKey(key), plan, expiresAt, maxDevices,
           JSON.stringify(features), note, discordUserId, discordUsername, issuedByDiscordId
         ]
       );
@@ -178,6 +211,7 @@ export async function create(req, res) {
       license: serializeLicense({
         id,
         key_prefix: key.slice(0, 12),
+        key_ciphertext: encryptLicenseKey(key),
         plan,
         status: "active",
         expires_at: expiresAt,
@@ -225,9 +259,71 @@ export async function find(req, res) {
 
 export async function one(req, res) {
   try {
-    res.json({ license: serializeLicense(await resolveLicense(query, req.params.ref)) });
+    res.json({ license: serializeLicense(await resolveLicense(query, req.params.ref), { includeFullKey: true }) });
   } catch (error) {
     sendError(res, error);
+  }
+}
+
+export async function keyInfo(req, res) {
+  try {
+    const reference = clean(req.body?.reference, 300);
+    if (!reference) {
+      throw httpError(400, "MI-KEYINFO-REFERENCE", "Enter a license key, key prefix, license ID, or Device ID.");
+    }
+    const result = await resolveLicenseOrDevice(query, reference);
+    res.json({
+      matchType: result.matchType,
+      licenses: result.rows.map(row => ({
+        ...serializeLicense(row, { includeFullKey: true }),
+        matchedDevice: result.matchType === "device" ? {
+          name: row.matched_device_name || "Unknown device",
+          firstSeenAt: row.matched_device_first_seen_at,
+          lastSeenAt: row.matched_device_last_seen_at
+        } : null
+      }))
+    });
+  } catch (error) {
+    sendError(res, error, "MI-KEYINFO");
+  }
+}
+
+export async function reissueKey(req, res) {
+  try {
+    const actor = req.headers["x-admin-actor"] || "admin";
+    const reference = clean(req.body?.reference, 300);
+    const confirmation = clean(req.body?.confirmation, 100);
+    if (confirmation !== "REISSUE KEY") {
+      throw httpError(400, "MI-REISSUE-CONFIRM", "Confirmation must exactly equal REISSUE KEY.");
+    }
+    const answer = await tx(async client => {
+      const found = await resolveLicenseOrDevice(client.query.bind(client), reference, { forUpdate: true });
+      if (found.rows.length !== 1) {
+        throw httpError(409, "MI-DEVICE-MULTIPLE-LICENSES", "That Device ID is linked to multiple licenses. Use the license ID shown by /keyinfo.");
+      }
+      const current = found.rows[0];
+      const newKey = createLicenseKey();
+      const changed = await client.query(
+        `UPDATE licenses
+         SET key_hash=$2,key_prefix=$3,key_ciphertext=$4,updated_at=NOW()
+         WHERE id=$1 RETURNING *`,
+        [current.id, sha256(newKey), newKey.slice(0, 12), encryptLicenseKey(newKey)]
+      );
+      await audit("license.reissue_key", actor, current.id, {
+        previousKeyPrefix: current.key_prefix,
+        newKeyPrefix: newKey.slice(0, 12),
+        lookupType: found.matchType,
+        discordUserId: current.discord_user_id
+      }, client.query.bind(client));
+      return { newKey, license: { ...changed.rows[0], device_count: current.device_count } };
+    });
+    res.json({
+      ok: true,
+      licenseKey: answer.newKey,
+      license: serializeLicense(answer.license, { includeFullKey: true })
+    });
+  } catch (error) {
+    sendError(res, error, "MI-KEY-REISSUE");
   }
 }
 

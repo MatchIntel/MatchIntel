@@ -26,6 +26,8 @@ export const config = {
   adminApiKey: text("ADMIN_API_KEY"),
   websiteApiKey: text("WEBSITE_API_KEY"),
   deviceHashPepper: text("DEVICE_HASH_PEPPER"),
+  // A separate stable secret is preferred. JWT_SECRET is used as a backwards-compatible fallback.
+  licenseKeyEncryptionKey: text("LICENSE_KEY_ENCRYPTION_KEY", text("JWT_SECRET")),
   freeTrialDays: number("FREE_TRIAL_DAYS", 2, { min: 1, max: 30 }),
   accessTokenMinutes: number("ACCESS_TOKEN_MINUTES", 15, { min: 1, max: 1440 }),
   refreshTokenDays: number("REFRESH_TOKEN_DAYS", 30, { min: 1, max: 3650 }),

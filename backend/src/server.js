@@ -149,6 +149,8 @@ app.get("/v1/admin/licenses", requireAdmin, admin.find);
 app.post("/v1/admin/licenses", requireAdmin, admin.create);
 app.post("/v1/admin/licenses/bulk-delete", requireAdmin, admin.deleteBulk);
 app.post("/v1/admin/licenses/bulk-extend", requireAdmin, admin.extendBulk);
+app.post("/v1/admin/keyinfo", requireAdmin, admin.keyInfo);
+app.post("/v1/admin/licenses/reissue", requireAdmin, admin.reissueKey);
 app.get("/v1/admin/licenses/:ref", requireAdmin, admin.one);
 app.delete("/v1/admin/licenses/:ref", requireAdmin, admin.deleteLicense);
 app.get("/v1/admin/licenses/:ref/devices", requireAdmin, admin.devices);
@@ -174,7 +176,7 @@ app.use((error, _req, res, _next) => {
 const server = http.createServer(app);
 app.locals.broadcast = attach(server);
 server.listen(config.port, "0.0.0.0", () => {
-  console.log(`MatchIntel backend 0.6.0 listening on 0.0.0.0:${config.port}`);
+  console.log(`MatchIntel backend 0.6.1 listening on 0.0.0.0:${config.port}`);
   const missingEnvironment = missingRequiredEnvironment();
   if (missingEnvironment.length) {
     console.error(`[configuration] Missing required Railway variable(s): ${missingEnvironment.join(", ")}`);

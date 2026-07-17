@@ -7,6 +7,43 @@ export const randomToken = (bytes = 48) => crypto.randomBytes(bytes).toString("b
 export const sha256 = value => crypto.createHash("sha256").update(String(value)).digest("hex");
 export const hashDevice = value => sha256(`${config.deviceHashPepper}:${value}`);
 
+function licenseCipherKey() {
+  return crypto.createHash("sha256")
+    .update(String(config.licenseKeyEncryptionKey || config.jwtSecret))
+    .digest();
+}
+
+export function encryptLicenseKey(value) {
+  const plaintext = String(value || "").trim();
+  if (!plaintext) return null;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", licenseCipherKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v1.${iv.toString("base64url")}.${tag.toString("base64url")}.${encrypted.toString("base64url")}`;
+}
+
+export function decryptLicenseKey(value) {
+  const packed = String(value || "").trim();
+  if (!packed) return null;
+  const [version, ivText, tagText, encryptedText] = packed.split(".");
+  if (version !== "v1" || !ivText || !tagText || !encryptedText) return null;
+  try {
+    const decipher = crypto.createDecipheriv(
+      "aes-256-gcm",
+      licenseCipherKey(),
+      Buffer.from(ivText, "base64url")
+    );
+    decipher.setAuthTag(Buffer.from(tagText, "base64url"));
+    return Buffer.concat([
+      decipher.update(Buffer.from(encryptedText, "base64url")),
+      decipher.final()
+    ]).toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
 export function createLicenseKey() {
   // Hex uses only characters accepted by the existing MI key format and always
   // produces exactly 24 characters, avoiding occasional short Base64URL keys.

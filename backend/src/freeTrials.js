@@ -1,6 +1,6 @@
 import { tx } from "./db.js";
 import { config } from "./config.js";
-import { createLicenseKey, randomUuid, sha256 } from "./security.js";
+import { createLicenseKey, encryptLicenseKey, randomUuid, sha256 } from "./security.js";
 
 const ALL_FEATURES = ["live_lobby", "enrichment", "history", "reports"];
 
@@ -58,13 +58,14 @@ export async function issueWebsiteTrial(req, res) {
 
       await client.query(
         `INSERT INTO licenses(
-          id,key_hash,key_prefix,plan,status,expires_at,max_devices,features,note,
+          id,key_hash,key_prefix,key_ciphertext,plan,status,expires_at,max_devices,features,note,
           discord_user_id,discord_username,issued_by_discord_id,is_free_trial
-        ) VALUES($1,$2,$3,'trial','active',$4,1,$5,$6,$7,$8,$7,TRUE)`,
+        ) VALUES($1,$2,$3,$4,'trial','active',$5,1,$6,$7,$8,$9,$8,TRUE)`,
         [
           licenseId,
           sha256(licenseKey),
           licenseKey.slice(0, 12),
+          encryptLicenseKey(licenseKey),
           expiresAt,
           JSON.stringify(ALL_FEATURES),
           "Automatically issued by the MatchIntel website free-trial flow.",
