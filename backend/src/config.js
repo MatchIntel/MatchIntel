@@ -3,6 +3,7 @@ const required = name => {
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
 };
+
 export const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 8080),
@@ -10,7 +11,9 @@ export const config = {
   databaseSsl: String(process.env.DATABASE_SSL || "false").toLowerCase() === "true",
   jwtSecret: required("JWT_SECRET"),
   adminApiKey: required("ADMIN_API_KEY"),
+  websiteApiKey: required("WEBSITE_API_KEY"),
   deviceHashPepper: required("DEVICE_HASH_PEPPER"),
+  freeTrialDays: Math.max(1, Math.min(30, Number(process.env.FREE_TRIAL_DAYS || 3))),
   accessTokenMinutes: Number(process.env.ACCESS_TOKEN_MINUTES || 15),
   refreshTokenDays: Number(process.env.REFRESH_TOKEN_DAYS || 30),
   corsOrigins: (process.env.CORS_ORIGINS || "*").split(",").map(x => x.trim()),

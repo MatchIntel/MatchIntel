@@ -5,7 +5,7 @@ import cors from "cors";
 import { rateLimit } from "express-rate-limit";
 import { config } from "./config.js";
 import { pool } from "./db.js";
-import { requireAdmin, requireAuth } from "./auth.js";
+import { requireAdmin, requireAuth, requireWebsite } from "./auth.js";
 import { requireClientVersion, getRuntimeSettings } from "./appSettings.js";
 import { activate, refresh, status as licenseStatus } from "./licenses.js";
 import { ingest, list, one } from "./live.js";
@@ -13,6 +13,7 @@ import { enrich } from "./enrichment.js";
 import { report } from "./reports.js";
 import * as admin from "./admin.js";
 import { attach } from "./websocket.js";
+import { issueWebsiteTrial } from "./freeTrials.js";
 import { migrationState, startMigrationLoop } from "./migrations.js";
 
 const app = express();
@@ -35,7 +36,7 @@ app.get("/health", (_req, res) => {
   res.status(200).json({
     status: "ok",
     service: "matchintel-backend",
-    version: "0.5.0",
+    version: "0.5.1",
     uptimeSeconds: Math.floor(process.uptime()),
     database: migrationState.ready ? "ready" : "starting",
     migrationAttempts: migrationState.attempts
@@ -53,7 +54,7 @@ app.get("/ready", async (_req, res) => {
   }
   try {
     await pool.query("SELECT 1");
-    res.json({ status: "ready", database: "ready", version: "0.5.0" });
+    res.json({ status: "ready", database: "ready", version: "0.5.1" });
   } catch (error) {
     res.status(503).json({
       status: "not-ready",
@@ -98,6 +99,7 @@ app.use("/v1", (req, res, next) => {
 });
 
 app.post("/v1/licenses/activate", activate);
+app.post("/v1/internal/free-trials", requireWebsite, issueWebsiteTrial);
 app.post("/v1/auth/refresh", refresh);
 app.get("/v1/licenses/status", requireClientVersion, requireAuth, licenseStatus);
 
@@ -140,7 +142,7 @@ app.use((error, _req, res, _next) => {
 const server = http.createServer(app);
 app.locals.broadcast = attach(server);
 server.listen(config.port, "0.0.0.0", () => {
-  console.log(`MatchIntel backend 0.5.0 listening on ${config.port}`);
+  console.log(`MatchIntel backend 0.5.1 listening on ${config.port}`);
   void startMigrationLoop();
 });
 
