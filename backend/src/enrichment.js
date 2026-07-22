@@ -1,6 +1,7 @@
 import { pool, query, tx } from "./db.js";
-import { config } from "./config.js";
+import { config, missingEnrichmentEnvironment } from "./config.js";
 import { fetchFortniteTrackerPublic, fetchGlobalEarningsLeaderboard, ProviderHttpError } from "./trackerPublicProvider.js";
+import { fetchCitoPlayer } from "./citoProvider.js";
 
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const normalize = value => String(value || "").trim().normalize("NFKC").toLowerCase();
@@ -218,9 +219,29 @@ async function fetchConfigured(player) {
 }
 
 async function fetchProvider(player) {
+  if (config.enrichment.provider === "cito") return fetchCitoPlayer(player);
   if (config.enrichment.provider === "configured") return fetchConfigured(player);
   if (config.enrichment.provider === "fortnitetracker-public") return fetchFortniteTrackerPublic(player);
   throw new Error("Player enrichment is disabled.");
+}
+
+function cacheHoursForResult(hasData) {
+  if (config.enrichment.provider === "cito") {
+    return hasData
+      ? config.enrichment.cito.cacheHours
+      : config.enrichment.cito.negativeCacheHours;
+  }
+  return hasData
+    ? config.enrichment.cacheHours
+    : config.enrichment.negativeCacheHours;
+}
+
+function providerRequestIntervalMs() {
+  return config.enrichment.requestIntervalMs;
+}
+
+function citoRateIntervalMs() {
+  return Math.ceil(60000 / Math.max(1, config.enrichment.cito.requestsPerMinute));
 }
 
 async function claimJob() {
@@ -247,9 +268,7 @@ async function claimJob() {
 
 async function saveSuccess(job, result) {
   const hasData = result.powerRanking != null || result.lifetimeEarnings != null;
-  const refreshHours = hasData
-    ? config.enrichment.cacheHours
-    : config.enrichment.negativeCacheHours;
+  const refreshHours = cacheHoursForResult(hasData);
   const nextRefreshAt = new Date(Date.now() + refreshHours * 3600000);
   const status = hasData ? "ready" : "unavailable";
 
@@ -321,12 +340,16 @@ function retryDelay(attempts, error) {
 async function saveFailure(job, error) {
   const attempts = Number(job.attempts || 0) + 1;
   const message = String(error?.message || error || "Unknown enrichment error").slice(0, 500);
-  const terminal = attempts >= config.enrichment.maxAttempts && !(error instanceof ProviderHttpError && [403, 429].includes(error.status));
+  const providerBlocked = error instanceof ProviderHttpError && [401, 403, 429].includes(error.status);
+  const terminal = attempts >= config.enrichment.maxAttempts && !providerBlocked;
   const delay = retryDelay(attempts, error);
 
-  if (error instanceof ProviderHttpError && [403, 429].includes(error.status)) {
-    const blockedUntil = new Date(Date.now() + Math.max(delay, config.enrichment.blockedCooldownMinutes * 60000));
-    enrichmentWorkerState.blockedUntil = blockedUntil.toISOString();
+  if (providerBlocked) {
+    const isCitoRateLimit = config.enrichment.provider === "cito" && error.status === 429;
+    const cooldown = isCitoRateLimit
+      ? Math.max(delay, citoRateIntervalMs())
+      : Math.max(delay, config.enrichment.blockedCooldownMinutes * 60000);
+    enrichmentWorkerState.blockedUntil = new Date(Date.now() + cooldown).toISOString();
   }
 
   await tx(async client => {
@@ -432,6 +455,12 @@ function startLeaderboardSeedLoop() {
 
 export async function startEnrichmentWorker() {
   if (enrichmentWorkerState.running || config.enrichment.provider === "disabled") return;
+  const missingProviderEnvironment = missingEnrichmentEnvironment();
+  if (missingProviderEnvironment.length) {
+    enrichmentWorkerState.lastError = `Missing enrichment variable(s): ${missingProviderEnvironment.join(", ")}`;
+    console.error(`[enrichment] ${enrichmentWorkerState.lastError}`);
+    return;
+  }
   enrichmentWorkerState.running = true;
   await recoverStuckJobs().catch(error => console.error(`[enrichment] Recovery failed: ${error.message}`));
   console.log(`[enrichment] Worker started with provider=${config.enrichment.provider}`);
@@ -472,7 +501,7 @@ export async function startEnrichmentWorker() {
         await saveFailure(job, error);
         console.warn(`[enrichment] ${job.display_name}: ${enrichmentWorkerState.lastError}`);
       }
-      await sleep(config.enrichment.requestIntervalMs);
+      await sleep(providerRequestIntervalMs());
     } catch (error) {
       enrichmentWorkerState.lastError = String(error?.message || error).slice(0, 500);
       console.error(`[enrichment] Worker loop error: ${enrichmentWorkerState.lastError}`);
@@ -499,6 +528,8 @@ export async function enrichmentQueueStatus(_req, res) {
   ]);
   res.json({
     provider: config.enrichment.provider,
+    providerConfigured: missingEnrichmentEnvironment().length === 0,
+    requestsPerMinute: config.enrichment.provider === "cito" ? config.enrichment.cito.requestsPerMinute : null,
     worker: enrichmentWorkerState,
     jobs: Object.fromEntries(queued.rows.map(row => [row.status, Number(row.count)])),
     cache: cached.rows[0]

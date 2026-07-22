@@ -3,7 +3,7 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import { rateLimit } from "express-rate-limit";
-import { config, missingRequiredEnvironment } from "./config.js";
+import { config, missingRequiredEnvironment, missingEnrichmentEnvironment } from "./config.js";
 import { pool } from "./db.js";
 import { requireAdmin, requireAuth, requireWebsite } from "./auth.js";
 import { requireClientVersion, getRuntimeSettings } from "./appSettings.js";
@@ -37,7 +37,7 @@ app.get("/health", (_req, res) => {
   res.status(200).json({
     status: "ok",
     service: "matchintel-backend",
-    version: "0.6.0",
+    version: "0.6.3-cito.1",
     uptimeSeconds: Math.floor(process.uptime()),
     configuration: missingEnvironment.length ? "incomplete" : "ready",
     missingEnvironment,
@@ -45,6 +45,9 @@ app.get("/health", (_req, res) => {
     migrationAttempts: migrationState.attempts,
     enrichment: {
       provider: config.enrichment.provider,
+      configured: missingEnrichmentEnvironment().length === 0,
+      missingEnvironment: missingEnrichmentEnvironment(),
+      requestsPerMinute: config.enrichment.provider === "cito" ? config.enrichment.cito.requestsPerMinute : null,
       workerRunning: enrichmentWorkerState.running,
       blockedUntil: enrichmentWorkerState.blockedUntil,
       lastSuccessAt: enrichmentWorkerState.lastSuccessAt,
@@ -74,7 +77,7 @@ app.get("/ready", async (_req, res) => {
   }
   try {
     await pool.query("SELECT 1");
-    res.json({ status: "ready", database: "ready", version: "0.6.0" });
+    res.json({ status: "ready", database: "ready", version: "0.6.3-cito.1" });
   } catch (error) {
     res.status(503).json({
       status: "not-ready",
@@ -176,7 +179,7 @@ app.use((error, _req, res, _next) => {
 const server = http.createServer(app);
 app.locals.broadcast = attach(server);
 server.listen(config.port, "0.0.0.0", () => {
-  console.log(`MatchIntel backend 0.6.1 listening on 0.0.0.0:${config.port}`);
+  console.log(`MatchIntel backend 0.6.3-cito.1 listening on 0.0.0.0:${config.port}`);
   const missingEnvironment = missingRequiredEnvironment();
   if (missingEnvironment.length) {
     console.error(`[configuration] Missing required Railway variable(s): ${missingEnvironment.join(", ")}`);

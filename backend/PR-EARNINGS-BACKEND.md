@@ -1,15 +1,20 @@
-# MatchIntel Backend 0.6.0 — Player Intelligence
+# MatchIntel Backend 0.6.3 — Cito Earnings
 
-Main additions:
+The backend now supports `ENRICHMENT_PROVIDER=cito` for lifetime competitive earnings.
 
-- PostgreSQL enrichment queue with `FOR UPDATE SKIP LOCKED` job claiming.
+Main behavior:
+
+- PostgreSQL queue with `FOR UPDATE SKIP LOCKED` job claiming.
 - Shared cache and duplicate-job prevention across lobbies.
-- New-player-first priority and stale-while-revalidate behavior.
-- Fortnite Tracker public profile parser for lifetime PR and earnings fields.
-- Global earnings leaderboard seeding.
-- Automatic retry and exponential backoff.
-- Circuit pause after HTTP 403/429 or browser-verification responses.
+- Epic account ID lookup first, exact display-name fallback second.
+- Cito `earnings.total` / normalized USD parsing.
+- Positive and negative caching.
+- Configurable requests-per-minute pacing.
+- Retry handling for timeouts, provider errors, and HTTP 429.
+- Provider pause for invalid credentials, plan restrictions, and rate limits.
 - Queue/cache status at authenticated `GET /v1/enrichment/status`.
-- Health endpoint remains available when Railway variables are missing.
+- Provider configuration details at public `GET /health`, without exposing the key.
 
-The worker is intentionally single-request and interval-controlled by default. It does not use proxies or bypass access controls.
+The API key remains only in Railway. It is never sent to the Windows client.
+
+See `CITO-SETUP.md` for deployment instructions.
