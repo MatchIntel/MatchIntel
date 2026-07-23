@@ -9,6 +9,16 @@ function number(name, fallback, { min = -Infinity, max = Infinity } = {}) {
   return Math.max(min, Math.min(max, parsed));
 }
 
+function boolean(name, fallback = false) {
+  const value = process.env[name];
+  if (value == null || String(value).trim() === "") return fallback;
+  return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
+}
+
+function provided(name) {
+  return Object.prototype.hasOwnProperty.call(process.env, name) && String(process.env[name] ?? "").trim() !== "";
+}
+
 const requiredNames = [
   "DATABASE_URL",
   "JWT_SECRET",
@@ -36,6 +46,16 @@ export const config = {
   maintenanceMessage: text("MAINTENANCE_MESSAGE", "MatchIntel is temporarily under maintenance."),
   minimumAppVersion: text("MINIMUM_APP_VERSION", "0.2.0"),
   latestAppVersion: text("LATEST_APP_VERSION", "0.4.0"),
+  forceUpdate: boolean("FORCE_UPDATE", false),
+  updateUrl: text("UPDATE_URL", text("APP_UPDATE_URL")),
+  updateMessage: text("UPDATE_MESSAGE", "A newer MatchIntel version is required before you can continue."),
+  versionEnvironment: {
+    minimumExplicit: provided("MINIMUM_APP_VERSION"),
+    latestExplicit: provided("LATEST_APP_VERSION"),
+    forceExplicit: provided("FORCE_UPDATE"),
+    updateUrlExplicit: provided("UPDATE_URL") || provided("APP_UPDATE_URL"),
+    updateMessageExplicit: provided("UPDATE_MESSAGE")
+  },
   enrichment: {
     provider: text("ENRICHMENT_PROVIDER", text("ENRICHMENT_ENDPOINT_TEMPLATE") ? "configured" : "fortnitetracker-public"),
     endpointTemplate: text("ENRICHMENT_ENDPOINT_TEMPLATE"),
@@ -50,15 +70,7 @@ export const config = {
     maxRetryMinutes: number("ENRICHMENT_MAX_RETRY_MINUTES", 120, { min: 5, max: 1440 }),
     blockedCooldownMinutes: number("ENRICHMENT_BLOCKED_COOLDOWN_MINUTES", 30, { min: 5, max: 1440 }),
     seedGlobalLeaderboard: text("ENRICHMENT_SEED_GLOBAL_LEADERBOARD", "true").toLowerCase() === "true",
-    leaderboardSeedHours: number("ENRICHMENT_LEADERBOARD_SEED_HOURS", 12, { min: 1, max: 168 }),
-    cito: {
-      apiKey: text("CITO_API_KEY"),
-      baseUrl: text("CITO_BASE_URL", "https://api.citoapi.com/api/v1").replace(/\/+$/, ""),
-      cacheHours: number("CITO_CACHE_HOURS", 24, { min: 1, max: 720 }),
-      negativeCacheHours: number("CITO_NEGATIVE_CACHE_HOURS", 6, { min: 1, max: 168 }),
-      requestTimeoutMs: number("CITO_REQUEST_TIMEOUT_MS", 15000, { min: 3000, max: 120000 }),
-      requestsPerMinute: number("CITO_REQUESTS_PER_MINUTE", 10, { min: 1, max: 5000 })
-    }
+    leaderboardSeedHours: number("ENRICHMENT_LEADERBOARD_SEED_HOURS", 12, { min: 1, max: 168 })
   }
 };
 
@@ -68,17 +80,4 @@ export function missingRequiredEnvironment() {
 
 export function configurationReady() {
   return missingRequiredEnvironment().length === 0;
-}
-
-export function missingEnrichmentEnvironment() {
-  if (config.enrichment.provider === "cito" && !config.enrichment.cito.apiKey) {
-    return ["CITO_API_KEY"];
-  }
-  if (config.enrichment.provider === "configured") {
-    const missing = [];
-    if (!config.enrichment.endpointTemplate) missing.push("ENRICHMENT_ENDPOINT_TEMPLATE");
-    if (!config.enrichment.apiKey) missing.push("ENRICHMENT_API_KEY");
-    return missing;
-  }
-  return [];
 }

@@ -1,8 +1,6 @@
 import { query } from "./db.js";
 import { config } from "./config.js";
-import { compareVersions } from "./security.js";
-
-const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+import { compareVersions, isVersionOutdated, normalizeVersion, requiredClientVersion, updatePayload } from "./versionControl.js";
 const CACHE_MS = 3000;
 const cache = { value: null, expiresAt: 0 };
 
@@ -10,16 +8,6 @@ function clean(value, max = 500) {
   return String(value ?? "").trim().slice(0, max);
 }
 
-function normalizeVersion(value, fallback) {
-  const version = clean(value || fallback, 50);
-  if (!VERSION_RE.test(version)) {
-    const error = new Error("Versions must look like 0.3.9 or 1.0.0-beta.1.");
-    error.status = 400;
-    error.code = "MI-VERSION-INVALID";
-    throw error;
-  }
-  return version;
-}
 
 function defaults() {
   return {
@@ -30,9 +18,9 @@ function defaults() {
     version: {
       minimumVersion: normalizeVersion(config.minimumAppVersion, "0.2.0"),
       latestVersion: normalizeVersion(config.latestAppVersion, config.minimumAppVersion),
-      forceUpdate: false,
-      updateUrl: "",
-      message: "A newer MatchIntel version is required before you can continue.",
+      forceUpdate: config.forceUpdate,
+      updateUrl: config.updateUrl,
+      message: config.updateMessage,
       updatedBy: null,
       updatedAt: null
     }
@@ -41,6 +29,7 @@ function defaults() {
 
 function mergeSettings(rows) {
   const value = defaults();
+  let databaseVersionFound = false;
   for (const row of rows) {
     const stored = row.value && typeof row.value === "object" ? row.value : {};
     if (row.key === "maintenance") {
@@ -48,6 +37,7 @@ function mergeSettings(rows) {
       value.maintenance.message = clean(stored.message || value.maintenance.message, 500);
     }
     if (row.key === "version_control") {
+      databaseVersionFound = true;
       value.version.minimumVersion = normalizeVersion(stored.minimumVersion, value.version.minimumVersion);
       value.version.latestVersion = normalizeVersion(stored.latestVersion, value.version.latestVersion);
       value.version.forceUpdate = Boolean(stored.forceUpdate);
@@ -57,9 +47,25 @@ function mergeSettings(rows) {
       value.version.updatedAt = stored.updatedAt || null;
     }
   }
+
+  // Explicit Railway variables are authoritative. Older backend builds allowed a
+  // saved app_settings row to silently override MINIMUM_APP_VERSION and
+  // LATEST_APP_VERSION, which made changing Railway variables appear to do
+  // nothing. When a variable is present, use it after the database merge.
+  const env = config.versionEnvironment;
+  const environmentOverride = env.minimumExplicit || env.latestExplicit || env.forceExplicit ||
+    env.updateUrlExplicit || env.updateMessageExplicit;
+  if (env.minimumExplicit) value.version.minimumVersion = normalizeVersion(config.minimumAppVersion, value.version.minimumVersion);
+  if (env.latestExplicit) value.version.latestVersion = normalizeVersion(config.latestAppVersion, value.version.latestVersion);
+  if (env.forceExplicit) value.version.forceUpdate = Boolean(config.forceUpdate);
+  if (env.updateUrlExplicit) value.version.updateUrl = clean(config.updateUrl, 1000);
+  if (env.updateMessageExplicit) value.version.message = clean(config.updateMessage, 500);
+
   if (compareVersions(value.version.latestVersion, value.version.minimumVersion) < 0) {
     value.version.latestVersion = value.version.minimumVersion;
   }
+  value.version.requiredVersion = requiredClientVersion(value.version);
+  value.version.source = environmentOverride ? "environment" : databaseVersionFound ? "database" : "defaults";
   return value;
 }
 
@@ -124,30 +130,13 @@ export async function setVersionControl(input, actor = "admin") {
   return (await getRuntimeSettings({ fresh: true })).version;
 }
 
-export function updatePayload(version) {
-  return {
-    code: "MI-UPDATE-REQUIRED",
-    message: version.message || `MatchIntel ${version.minimumVersion} or newer is required.`,
-    minimumVersion: version.minimumVersion,
-    latestVersion: version.latestVersion,
-    updateUrl: version.updateUrl || "",
-    forceUpdate: version.forceUpdate
-  };
-}
-
-export function isVersionOutdated(appVersion, version, { allowMissing = false } = {}) {
-  if (!version.forceUpdate) return false;
-  const supplied = clean(appVersion, 50);
-  if (!supplied) return !allowMissing;
-  if (!VERSION_RE.test(supplied)) return true;
-  return compareVersions(supplied, version.minimumVersion) < 0;
-}
+export { isVersionOutdated, requiredClientVersion, updatePayload };
 
 export async function requireClientVersion(req, res, next) {
   try {
     const settings = await getRuntimeSettings();
     const appVersion = req.headers["x-matchintel-version"];
-    if (isVersionOutdated(appVersion, settings.version, { allowMissing: !settings.version.forceUpdate })) {
+    if (isVersionOutdated(appVersion, settings.version, { allowMissing: false })) {
       return res.status(426).json(updatePayload(settings.version));
     }
     req.runtimeSettings = settings;

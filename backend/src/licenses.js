@@ -85,7 +85,7 @@ async function enforceRuntime(appVersion, res, { allowMissingVersion = false } =
     return null;
   }
   if (isVersionOutdated(appVersion, settings.version, {
-    allowMissing: allowMissingVersion && !settings.version.forceUpdate
+    allowMissing: allowMissingVersion
   })) {
     res.status(426).json(updatePayload(settings.version));
     return null;
