@@ -1,4 +1,4 @@
-import { SlashCommandBuilder } from "discord.js";
+import { ChannelType, SlashCommandBuilder } from "discord.js";
 
 const planChoices = [
   { name: "Trial", value: "trial" },
@@ -23,7 +23,7 @@ const extensionScopes = [
   { name: "Revoked trials only", value: "revoked" }
 ];
 
-export const commands = [
+const commandBuilders = [
   new SlashCommandBuilder()
     .setName("genkey")
     .setDescription("Generate a Discord-linked MatchIntel key")
@@ -146,4 +146,59 @@ export const commands = [
     .addIntegerOption(option => option.setName("limit").setDescription("Entries to show").setMinValue(1).setMaxValue(20)),
 
   new SlashCommandBuilder().setName("bothelp").setDescription("Show the MatchIntel bot command list")
-].map(command => command.toJSON());
+  ,new SlashCommandBuilder()
+    .setName("setupwelcome")
+    .setDescription("Configure the MatchIntel welcome message and automatic member role")
+    .addChannelOption(option => option.setName("channel").setDescription("Channel that receives welcome messages").setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
+    .addRoleOption(option => option.setName("role").setDescription("Role automatically added to new members").setRequired(true))
+    .addStringOption(option => option.setName("title").setDescription("Welcome embed title").setMaxLength(200))
+    .addStringOption(option => option.setName("message").setDescription("Supports {member}, {server}, and {memberCount}").setMaxLength(2000)),
+
+  new SlashCommandBuilder()
+    .setName("testwelcome")
+    .setDescription("Preview the configured welcome message in the welcome channel"),
+
+  new SlashCommandBuilder()
+    .setName("setuptickets")
+    .setDescription("Post the MatchIntel ticket panel in this channel")
+    .addChannelOption(option => option.setName("category").setDescription("Category where private tickets are created").addChannelTypes(ChannelType.GuildCategory))
+    .addRoleOption(option => option.setName("support_role").setDescription("Support or staff role that can view tickets"))
+    .addRoleOption(option => option.setName("mod_role").setDescription("Moderator role that can view tickets"))
+    .addStringOption(option => option.setName("title").setDescription("Ticket panel title").setMaxLength(200))
+    .addStringOption(option => option.setName("message").setDescription("Ticket panel instructions").setMaxLength(2000)),
+
+  new SlashCommandBuilder()
+    .setName("sendthismessage")
+    .setDescription("Send a message or files as MatchIntel Helper in this channel")
+    .addStringOption(option => option.setName("message").setDescription("Message text").setMaxLength(4000))
+    .addStringOption(option => option.setName("title").setDescription("Optional embed title").setMaxLength(200))
+    .addAttachmentOption(option => option.setName("file_1").setDescription("Optional image or file"))
+    .addAttachmentOption(option => option.setName("file_2").setDescription("Optional second image or file"))
+    .addAttachmentOption(option => option.setName("file_3").setDescription("Optional third image or file"))
+    .addBooleanOption(option => option.setName("allow_mentions").setDescription("Allow @everyone, roles, and user mentions in the message")),
+
+  new SlashCommandBuilder()
+    .setName("publishupdate")
+    .setDescription("Publish a MatchIntel client, backend, bot, or website update")
+    .addStringOption(option => option.setName("component").setDescription("What changed").setRequired(true).addChoices(
+      { name: "Client", value: "Client" },
+      { name: "Backend", value: "Backend" },
+      { name: "Discord bot", value: "Discord bot" },
+      { name: "Website", value: "Website" },
+      { name: "Multiple components", value: "Multiple components" }
+    ))
+    .addStringOption(option => option.setName("version").setDescription("Version label, such as 0.7.2").setRequired(true).setMaxLength(50))
+    .addStringOption(option => option.setName("summary").setDescription("Full update notes").setRequired(true).setMaxLength(4000))
+    .addAttachmentOption(option => option.setName("file").setDescription("Optional release file or image"))
+    .addChannelOption(option => option.setName("channel").setDescription("Defaults to the configured MatchIntel updates channel").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
+]
+
+export const commands = commandBuilders.map(command => command.toJSON());
+
+export const publicCommands = [
+  new SlashCommandBuilder()
+    .setName("whatsmykey")
+    .setDescription("Privately show the MatchIntel key linked to your Discord account")
+    .setDMPermission(true)
+    .toJSON()
+];

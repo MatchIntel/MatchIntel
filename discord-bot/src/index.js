@@ -1,21 +1,37 @@
 import { Client, GatewayIntentBits, REST, Routes } from "discord.js";
 import { config } from "./config.js";
-import { commands } from "./commands.js";
+import { commands, publicCommands } from "./commands.js";
 import { api } from "./api.js";
 import { canUse, accessLevel } from "./access.js";
 import { COLORS, discordTime, embed, licenseFields, licenseLabel, truncate } from "./format.js";
+import {
+  announceReleaseOnce,
+  handleGuildMemberAdd,
+  handlePublishUpdate,
+  handleSendThisMessage,
+  handleSetupTickets,
+  handleSetupWelcome,
+  handleTestWelcome,
+  handleTicketButton,
+  handleWhatsMyKey
+} from "./community.js";
 
 const ADMIN_COMMANDS = new Set([
   "revokekey", "revokeuser", "restorekey", "convertkey", "transferkey",
-  "deletekey", "reissuekey", "extendkey", "extendallkeys", "maintenance", "setversion", "auditlog"
+  "deletekey", "reissuekey", "extendkey", "extendallkeys", "maintenance", "setversion", "auditlog",
+  "setupwelcome", "testwelcome", "setuptickets"
 ]);
-const OWNER_ONLY_COMMANDS = new Set(["deleteallkeys", "setversion"]);
+const OWNER_ONLY_COMMANDS = new Set(["deleteallkeys", "setversion", "sendthismessage", "publishupdate"]);
 
-await new REST({ version: "10" })
-  .setToken(config.token)
-  .put(Routes.applicationGuildCommands(config.clientId, config.guildId), { body: commands });
+const rest = new REST({ version: "10" }).setToken(config.token);
+await Promise.all([
+  rest.put(Routes.applicationGuildCommands(config.clientId, config.guildId), { body: commands }),
+  rest.put(Routes.applicationCommands(config.clientId), { body: publicCommands })
+]);
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages]
+});
 
 function username(user) {
   return user.globalName || user.username;
@@ -373,9 +389,10 @@ async function handleAuditLog(interaction) {
 
 async function handleHelp(interaction) {
   return interaction.editReply({ embeds: [embed("MatchIntel bot commands", [
+    { name: "Everyone (bot DMs)", value: "`/whatsmykey` privately shows the key linked to your Discord account." },
     { name: "Staff", value: "`/genkey` `/keyinfo` `/finduser` `/listkeys` `/resetdevices` `/devices` `/versionstatus` `/systemstatus`" },
-    { name: "Admin", value: "`/reissuekey` `/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog`" },
-    { name: "Owner only", value: "`/deleteallkeys` `/setversion`" },
+    { name: "Admin", value: "`/reissuekey` `/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog` `/setupwelcome` `/testwelcome` `/setuptickets`" },
+    { name: "Owner only", value: "`/deleteallkeys` `/setversion` `/sendthismessage` `/publishupdate`" },
     { name: "Your access", value: accessLevel(interaction) },
     { name: "Deletion safety", value: "Revoking disables a key but keeps its record. Deleting permanently removes it and cannot be undone." }
   ])] });
@@ -403,37 +420,66 @@ const handlers = {
   versionstatus: handleVersionStatus,
   systemstatus: handleSystemStatus,
   auditlog: handleAuditLog,
+  setupwelcome: handleSetupWelcome,
+  testwelcome: handleTestWelcome,
+  setuptickets: handleSetupTickets,
+  sendthismessage: handleSendThisMessage,
+  publishupdate: handlePublishUpdate,
   bothelp: handleHelp
 };
 
 client.on("interactionCreate", async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-  if (!canUse(interaction, "staff")) {
-    return deny(interaction, "You need the configured MatchIntel staff role to use this bot.");
-  }
-  if (ADMIN_COMMANDS.has(interaction.commandName) && !canUse(interaction, "admin")) {
-    return deny(interaction, "This command requires the configured MatchIntel admin role.");
-  }
-  if (OWNER_ONLY_COMMANDS.has(interaction.commandName) && accessLevel(interaction) !== "owner") {
-    return deny(interaction, "This destructive global command is restricted to MatchIntel owner IDs.");
-  }
-
-  await interaction.deferReply({ ephemeral: true });
   try {
+    if (interaction.isButton() && interaction.customId.startsWith("mi_ticket_")) {
+      await handleTicketButton(interaction);
+      return;
+    }
+    if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === "whatsmykey") {
+      await handleWhatsMyKey(interaction);
+      return;
+    }
+
+    if (!canUse(interaction, "staff")) {
+      return deny(interaction, "You need the configured MatchIntel staff role to use this bot command.");
+    }
+    if (ADMIN_COMMANDS.has(interaction.commandName) && !canUse(interaction, "admin")) {
+      return deny(interaction, "This command requires the configured MatchIntel admin role.");
+    }
+    if (OWNER_ONLY_COMMANDS.has(interaction.commandName) && accessLevel(interaction) !== "owner") {
+      return deny(interaction, "This command is restricted to configured MatchIntel owner IDs.");
+    }
+
+    await interaction.deferReply({ ephemeral: true });
     const handler = handlers[interaction.commandName];
     if (!handler) return interaction.editReply("Unknown command.");
     await handler(interaction);
   } catch (error) {
-    console.error(`Command ${interaction.commandName} failed`, error);
+    console.error(`Interaction ${interaction.commandName || interaction.customId || "unknown"} failed`, error);
     const code = error.code ? ` (${error.code})` : "";
-    await interaction.editReply(`Error${code}: ${error.message || "Unknown error"}`);
+    const message = `Error${code}: ${error.message || "Unknown error"}`;
+    if (interaction.deferred || interaction.replied) await interaction.editReply(message).catch(() => {});
+    else await interaction.reply({ content: message, ephemeral: interaction.inGuild() }).catch(() => {});
   }
 });
 
+client.on("guildMemberAdd", member => {
+  void handleGuildMemberAdd(member);
+});
+
 client.once("ready", () => {
-  console.log(`MatchIntel bot 0.5.1 logged in as ${client.user.tag}`);
+  console.log(`MatchIntel bot 0.7.2 logged in as ${client.user.tag}`);
   console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
   if (!config.staffRoles.size) console.warn("BOT_STAFF_ROLE_IDS is empty. Only owners/admin-role users can access commands.");
+  let releaseTimer = null;
+  const attemptReleaseAnnouncement = async () => {
+    const finished = await announceReleaseOnce(client);
+    if (finished && releaseTimer) clearInterval(releaseTimer);
+  };
+  void attemptReleaseAnnouncement();
+  releaseTimer = setInterval(() => void attemptReleaseAnnouncement(), 60_000);
+  releaseTimer.unref();
 });
 
 client.login(config.token);
