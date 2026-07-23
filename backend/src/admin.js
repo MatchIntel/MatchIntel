@@ -344,6 +344,31 @@ export async function userLicenses(req, res) {
   }
 }
 
+export async function revealUserLicenses(req, res) {
+  try {
+    const userId = discordIdFrom(req.params.discordUserId);
+    const actor = clean(req.headers["x-admin-actor"] || "discord-bot", 200);
+    const result = await query(
+      `SELECT l.*,
+        (SELECT COUNT(*)::int FROM devices d WHERE d.license_id=l.id) AS device_count
+       FROM licenses l
+       WHERE l.discord_user_id=$1
+       ORDER BY
+         CASE WHEN l.status='active' AND (l.expires_at IS NULL OR l.expires_at>NOW()) THEN 0 ELSE 1 END,
+         l.created_at DESC`,
+      [userId]
+    );
+    const licenses = result.rows.map(row => serializeLicense(row, { includeFullKey: true }));
+    await audit("license.reveal_self", actor, userId, {
+      licenseCount: licenses.length,
+      recoverableCount: licenses.filter(item => item.fullKeyAvailable).length
+    });
+    res.json({ discordUserId: userId, licenses });
+  } catch (error) {
+    sendError(res, error, "MI-KEY-SELF-REVEAL");
+  }
+}
+
 export async function revoke(req, res) {
   try {
     const actor = req.headers["x-admin-actor"] || "admin";
