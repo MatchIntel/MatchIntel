@@ -187,7 +187,7 @@ const commandBuilders = [
       { name: "Website", value: "Website" },
       { name: "Multiple components", value: "Multiple components" }
     ))
-    .addStringOption(option => option.setName("version").setDescription("Version label, such as 0.7.2").setRequired(true).setMaxLength(50))
+    .addStringOption(option => option.setName("version").setDescription("Version label, such as 0.7.4").setRequired(true).setMaxLength(50))
     .addStringOption(option => option.setName("summary").setDescription("Full update notes").setRequired(true).setMaxLength(4000))
     .addAttachmentOption(option => option.setName("file").setDescription("Optional release file or image"))
     .addChannelOption(option => option.setName("channel").setDescription("Defaults to the configured MatchIntel updates channel").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
@@ -198,7 +198,12 @@ export const commands = commandBuilders.map(command => command.toJSON());
 export const publicCommands = [
   new SlashCommandBuilder()
     .setName("whatsmykey")
-    .setDescription("Privately show the MatchIntel key linked to your Discord account")
+    .setDescription("Privately show every MatchIntel key linked to your Discord account")
+    .setDMPermission(true)
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName("whatsmytrialkey")
+    .setDescription("Recover the exact free-trial key issued to you by the MatchIntel website")
     .setDMPermission(true)
     .toJSON()
 ];

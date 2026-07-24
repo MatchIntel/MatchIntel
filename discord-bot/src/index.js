@@ -3,7 +3,7 @@ import { config } from "./config.js";
 import { commands, publicCommands } from "./commands.js";
 import { api } from "./api.js";
 import { canUse, accessLevel } from "./access.js";
-import { COLORS, discordTime, embed, licenseFields, licenseLabel, truncate } from "./format.js";
+import { COLORS, discordTime, durationText, embed, licenseExpiryText, licenseFields, licenseLabel, truncate } from "./format.js";
 import {
   announceReleaseOnce,
   handleGuildMemberAdd,
@@ -13,7 +13,8 @@ import {
   handleSetupWelcome,
   handleTestWelcome,
   handleTicketButton,
-  handleWhatsMyKey
+  handleWhatsMyKey,
+  handleWhatsMyTrialKey
 } from "./community.js";
 
 const ADMIN_COMMANDS = new Set([
@@ -60,15 +61,27 @@ async function handleGenKey(interaction) {
       issuedByDiscordId: interaction.user.id
     })
   });
-  const expires = result.license.expiresAt ? discordTime(result.license.expiresAt) : "Lifetime";
-  const customerEmbed = embed("Your MatchIntel license", [
+  const expires = licenseExpiryText(result.license);
+  const customerFields = [
     { name: "License key", value: `\`${result.licenseKey}\`` },
     { name: "Plan", value: result.license.plan, inline: true },
     { name: "Devices", value: String(result.license.maxDevices), inline: true },
     { name: "Expires", value: expires, inline: true },
     { name: "Linked Discord account", value: `<@${target.id}>` },
     { name: "Keep this private", value: "Do not post or share this key. It is linked to your Discord account." }
-  ], COLORS.purple);
+  ];
+  if (result.license.plan === "trial") {
+    customerFields.splice(3, 0, {
+      name: "Timed access",
+      value: durationText(result.license.activationDurationSeconds),
+      inline: true
+    });
+    customerFields.push({
+      name: "When the timer starts",
+      value: "Only after the key is successfully activated in the MatchIntel app for the first time."
+    });
+  }
+  const customerEmbed = embed("Your MatchIntel license", customerFields, COLORS.purple);
   let delivery = "Sent by DM.";
   try { await target.send({ embeds: [customerEmbed] }); }
   catch { delivery = "DM failed. Copy the key below and send it securely."; }
@@ -77,6 +90,11 @@ async function handleGenKey(interaction) {
     { name: "Key", value: `\`${result.licenseKey}\`` },
     { name: "License ID", value: `\`${result.license.id}\`` },
     { name: "Plan", value: result.license.plan, inline: true },
+    ...(result.license.plan === "trial" ? [{
+      name: "Timed access",
+      value: durationText(result.license.activationDurationSeconds),
+      inline: true
+    }] : []),
     { name: "Devices", value: String(result.license.maxDevices), inline: true },
     { name: "Expires", value: expires, inline: true },
     { name: "Delivery", value: delivery }
@@ -389,7 +407,7 @@ async function handleAuditLog(interaction) {
 
 async function handleHelp(interaction) {
   return interaction.editReply({ embeds: [embed("MatchIntel bot commands", [
-    { name: "Everyone (bot DMs)", value: "`/whatsmykey` privately shows the key linked to your Discord account." },
+    { name: "Everyone (bot DMs)", value: "`/whatsmykey` privately shows all linked keys. `/whatsmytrialkey` recovers the exact free-trial key issued by the website." },
     { name: "Staff", value: "`/genkey` `/keyinfo` `/finduser` `/listkeys` `/resetdevices` `/devices` `/versionstatus` `/systemstatus`" },
     { name: "Admin", value: "`/reissuekey` `/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog` `/setupwelcome` `/testwelcome` `/setuptickets`" },
     { name: "Owner only", value: "`/deleteallkeys` `/setversion` `/sendthismessage` `/publishupdate`" },
@@ -440,6 +458,10 @@ client.on("interactionCreate", async interaction => {
       await handleWhatsMyKey(interaction);
       return;
     }
+    if (interaction.commandName === "whatsmytrialkey") {
+      await handleWhatsMyTrialKey(interaction);
+      return;
+    }
 
     if (!canUse(interaction, "staff")) {
       return deny(interaction, "You need the configured MatchIntel staff role to use this bot command.");
@@ -469,7 +491,7 @@ client.on("guildMemberAdd", member => {
 });
 
 client.once("ready", () => {
-  console.log(`MatchIntel bot 0.7.3 logged in as ${client.user.tag}`);
+  console.log(`MatchIntel bot 0.7.4 logged in as ${client.user.tag}`);
   console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
   if (!config.staffRoles.size) console.warn("BOT_STAFF_ROLE_IDS is empty. Only owners/admin-role users can access commands.");
   let releaseTimer = null;

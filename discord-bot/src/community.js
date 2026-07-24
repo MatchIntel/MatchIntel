@@ -9,7 +9,7 @@ import {
 import { api } from "./api.js";
 import { canUse, accessLevel } from "./access.js";
 import { config } from "./config.js";
-import { COLORS, discordTime, truncate } from "./format.js";
+import { COLORS, discordTime, durationText, licenseExpiryText, licenseStatusText, truncate } from "./format.js";
 
 const settingsCache = new Map();
 const SETTINGS_TTL_MS = 30_000;
@@ -338,7 +338,7 @@ async function createTicket(interaction, ticketType = TICKET_TYPES.general) {
         { name: "Opened by", value: `<@${interaction.user.id}>`, inline: true },
         { name: "Created", value: discordTime(new Date()), inline: true }
       )
-      .setFooter({ text: "Never post your license key publicly. Use /whatsmykey only in the bot's DMs." })],
+      .setFooter({ text: "Never post your license key publicly. Use /whatsmykey or /whatsmytrialkey only in the bot's DMs." })],
     components: [ticketOpenButtons()],
     allowedMentions: { users: [interaction.user.id], parse: [] }
   });
@@ -497,25 +497,87 @@ export async function handleWhatsMyKey(interaction) {
   }
   const ordered = [...licenses].sort((a, b) => Number(Boolean(b.isUsable)) - Number(Boolean(a.isUsable)));
   const embeds = ordered.slice(0, 10).map((license, index) => {
-    const status = license.isUsable ? "Active" : license.status === "revoked" ? "Revoked" : "Expired";
     const description = license.fullKey
       ? `\`\`\`text\n${license.fullKey}\n\`\`\``
       : "This older key was issued before secure key recovery was enabled. Staff must reissue it before the complete value can be shown.";
+    const fields = [
+      { name: "Status", value: licenseStatusText(license), inline: true },
+      { name: "Expires", value: licenseExpiryText(license), inline: true },
+      { name: "Devices", value: `${license.deviceCount}/${license.maxDevices}`, inline: true }
+    ];
+    if (license.plan === "trial" && license.activationDurationSeconds) {
+      fields.splice(1, 0, {
+        name: "Timed access",
+        value: durationText(license.activationDurationSeconds),
+        inline: true
+      });
+    }
     const builder = new EmbedBuilder()
       .setColor(license.isUsable ? COLORS.green : COLORS.yellow)
       .setTitle(`${license.plan === "lifetime" ? "Lifetime" : "Trial"} MatchIntel key`)
       .setDescription(description)
-      .addFields(
-        { name: "Status", value: status, inline: true },
-        { name: "Expires", value: discordTime(license.expiresAt), inline: true },
-        { name: "Devices", value: `${license.deviceCount}/${license.maxDevices}`, inline: true }
-      );
+      .addFields(...fields);
+    if (license.activatedAt) builder.addFields({ name: "First activated", value: discordTime(license.activatedAt), inline: true });
     if (index === 0) builder.setAuthor({ name: "PRIVATE — do not share your MatchIntel key with anyone" });
     return builder;
   });
   await interaction.editReply({
     content: "⚠️ **Keep this DM private. Never send your key to another person, post it in a server, or show it on stream.**",
     embeds,
+    allowedMentions: { parse: [] }
+  });
+}
+
+export async function handleWhatsMyTrialKey(interaction) {
+  if (interaction.inGuild()) {
+    return interaction.reply({
+      content: "For your security, open my Discord profile, press **Message**, and use `/whatsmytrialkey` in our private DM.",
+      ephemeral: true
+    });
+  }
+
+  await interaction.deferReply();
+  const result = await api(`/v1/admin/users/${interaction.user.id}/website-trial/reveal`, {
+    actor: `discord-trial-self:${interaction.user.id}`
+  });
+
+  if (!result.claimed) {
+    return interaction.editReply(
+      "This Discord account has not claimed a MatchIntel website free trial. Claim it on the MatchIntel website first, then use `/whatsmytrialkey` here whenever you need to see the same key again."
+    );
+  }
+
+  const trial = result.trial;
+  if (!trial) {
+    return interaction.editReply(
+      "Your Discord account has a recorded website trial claim, but its license record is no longer recoverable. Please open a support ticket so staff can review it."
+    );
+  }
+
+  if (!trial.fullKey) {
+    return interaction.editReply(
+      "Your website trial was found, but the complete key cannot be decrypted. Please open a support ticket so staff can securely reissue it."
+    );
+  }
+
+  const fields = [
+    { name: "Status", value: licenseStatusText(trial), inline: true },
+    { name: "Trial length", value: durationText(trial.activationDurationSeconds), inline: true },
+    { name: "Expires", value: licenseExpiryText(trial), inline: true }
+  ];
+  if (trial.activatedAt) fields.push({ name: "First activated", value: discordTime(trial.activatedAt), inline: true });
+
+  const trialEmbed = new EmbedBuilder()
+    .setColor(trial.isUsable ? COLORS.green : COLORS.yellow)
+    .setAuthor({ name: "PRIVATE — this is the same trial key issued by the MatchIntel website" })
+    .setTitle("Your MatchIntel website free-trial key")
+    .setDescription(`\`\`\`text\n${trial.fullKey}\n\`\`\``)
+    .addFields(...fields)
+    .setFooter({ text: "The trial countdown starts only after the key is successfully activated in the MatchIntel app." });
+
+  await interaction.editReply({
+    content: "⚠️ **Keep this DM private. Do not share this key or show it on stream.**",
+    embeds: [trialEmbed],
     allowedMentions: { parse: [] }
   });
 }

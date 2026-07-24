@@ -25,10 +25,10 @@ export const config = {
   adminRoles: ids("BOT_ADMIN_ROLE_IDS"),
   defaultTrialDays: Math.max(1, Math.min(30, Number(process.env.DEFAULT_TRIAL_DAYS || 3))),
   updatesChannelId: text("MATCHINTEL_UPDATES_CHANNEL_ID", "1529448180213874740"),
-  releaseVersion: text("MATCHINTEL_RELEASE_VERSION", "0.7.2"),
+  releaseVersion: text("MATCHINTEL_RELEASE_VERSION", "0.7.4"),
   releaseComponents: text("MATCHINTEL_RELEASE_COMPONENTS", "Discord bot + backend"),
   releaseNotes: text(
     "MATCHINTEL_RELEASE_NOTES",
-    "Added welcome messages, automatic member roles, private support tickets, DM key recovery, staff announcement tools, and automatic release posts."
+    "Timed keys now start on first successful app activation, website trial keys can be recovered with /whatsmytrialkey, and ticket types remain supported."
   )
 };

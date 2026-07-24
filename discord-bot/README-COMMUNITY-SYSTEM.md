@@ -1,4 +1,4 @@
-# MatchIntel Community System 0.7.2
+# MatchIntel Community System 0.7.4
 
 This update adds the requested Discord community features while keeping all existing license-management commands.
 
@@ -6,7 +6,8 @@ This update adds the requested Discord community features while keeping all exis
 
 - Custom welcome message in a selected channel.
 - Automatic role for every new non-bot member.
-- Private `/whatsmykey` command available in MatchIntel Helper DMs.
+- Private `/whatsmykey` and `/whatsmytrialkey` commands available in MatchIntel Helper DMs.
+- Timed license countdowns begin only after first successful app activation.
 - Full ticket panel with private ticket channels.
 - Ticket claim, close, reopen, and permanent-delete controls.
 - `/sendthismessage` for owner-posted messages, images, and files as MatchIntel Helper.
@@ -18,13 +19,13 @@ This update adds the requested Discord community features while keeping all exis
 
 ### 1. Backend
 
-Replace the files in your existing repository's `/backend` directory with the contents of the supplied `backend` folder, commit, and push. Railway will run migration `007_discord_community_system.sql` automatically.
+Replace the files in your existing repository's `/backend` directory with the contents of the supplied `backend` folder, commit, and push. Railway will run all pending migrations automatically, including `008_activation_timed_licenses.sql`.
 
 Keep every existing Railway variable unchanged.
 
 **License-key encryption warning:** do not change `JWT_SECRET` or `LICENSE_KEY_ENCRYPTION_KEY`. Existing recoverable keys can only be decrypted with the same secret that encrypted them. When `LICENSE_KEY_ENCRYPTION_KEY` was never set, MatchIntel uses the existing `JWT_SECRET` as the fallback; leave that arrangement unchanged.
 
-The backend health endpoint should report version `0.7.2` after deployment.
+The backend health endpoint should report version `0.7.4` after deployment.
 
 ### 2. Discord bot
 
@@ -34,7 +35,7 @@ Keep the existing variables and add/confirm:
 
 ```env
 MATCHINTEL_UPDATES_CHANNEL_ID=1529448180213874740
-MATCHINTEL_RELEASE_VERSION=0.7.2
+MATCHINTEL_RELEASE_VERSION=0.7.4
 MATCHINTEL_RELEASE_COMPONENTS=Discord bot + backend
 MATCHINTEL_RELEASE_NOTES=Added welcome messages, automatic roles, private tickets, DM key recovery, announcement tools, and release posts.
 ```
@@ -107,7 +108,7 @@ A customer opens MatchIntel Helper's profile, presses **Message**, and runs:
 /whatsmykey
 ```
 
-The command refuses to reveal a key publicly in the server. It only returns keys linked to the Discord account that invoked the DM command and includes a warning not to share them.
+Use `/whatsmytrialkey` to recover the exact website-issued free-trial key. Both commands refuse to reveal a key publicly in the server. It only returns keys linked to the Discord account that invoked the DM command and includes a warning not to share them.
 
 Keys created after secure key recovery was enabled have an encrypted recoverable value. An older key that only has a hash cannot be mathematically reconstructed; the bot will say that it needs to be reissued. Staff can use `/reissuekey`, which invalidates the old value and creates a new recoverable key.
 
@@ -138,4 +139,4 @@ Choose Client, Backend, Discord bot, Website, or Multiple components. It default
 3. Claim, close, reopen, and delete a test ticket.
 4. DM MatchIntel Helper and run `/whatsmykey`.
 5. Run `/sendthismessage` with an image.
-6. Confirm the 0.7.2 release announcement appears once in `1529448180213874740`.
+6. Confirm the 0.7.4 release announcement appears once in `1529448180213874740`.

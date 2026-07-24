@@ -19,9 +19,40 @@ export function discordTime(value, style = "R") {
   return `<t:${Math.floor(date.getTime() / 1000)}:${style}>`;
 }
 
+export function durationText(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value <= 0) return "Not configured";
+  const units = [
+    [31_536_000, "year"],
+    [2_592_000, "month"],
+    [604_800, "week"],
+    [86_400, "day"],
+    [3_600, "hour"]
+  ];
+  for (const [size, name] of units) {
+    if (value % size === 0) {
+      const amount = value / size;
+      return `${amount} ${name}${amount === 1 ? "" : "s"}`;
+    }
+  }
+  return `${Math.round(value / 3600)} hours`;
+}
+
+export function licenseStatusText(license) {
+  if (license.status === "revoked") return "Revoked";
+  if (license.pendingActivation) return "Awaiting first activation";
+  if (license.expiresAt && new Date(license.expiresAt) <= new Date()) return "Expired";
+  return "Active";
+}
+
+export function licenseExpiryText(license) {
+  if (license.plan === "lifetime") return "Lifetime";
+  if (license.pendingActivation) return "Starts on first successful app activation";
+  return license.expiresAt ? discordTime(license.expiresAt) : "Not activated";
+}
+
 export function licenseLabel(license) {
-  const status = license.isUsable ? "Active" : license.status === "revoked" ? "Revoked" : "Expired";
-  return `\`${license.keyPrefix}…\` • **${license.plan}** • ${status} • ${license.deviceCount}/${license.maxDevices} devices • ID \`${license.id}\``;
+  return `\`${license.keyPrefix}…\` • **${license.plan}** • ${licenseStatusText(license)} • ${license.deviceCount}/${license.maxDevices} devices • ID \`${license.id}\``;
 }
 
 export function licenseFields(license, { showRecoveryNote = false } = {}) {
@@ -35,13 +66,23 @@ export function licenseFields(license, { showRecoveryNote = false } = {}) {
     }] : []),
     { name: "Owner", value: license.discordUserId ? `<@${license.discordUserId}> (\`${license.discordUserId}\`)` : "Unlinked" },
     { name: "Plan", value: license.plan, inline: true },
-    { name: "Status", value: license.isUsable ? "Active" : license.status, inline: true },
+    { name: "Status", value: licenseStatusText(license), inline: true },
     { name: "Devices", value: `${license.deviceCount}/${license.maxDevices}`, inline: true },
-    { name: "Expires", value: discordTime(license.expiresAt), inline: true },
+    { name: "Expires", value: licenseExpiryText(license), inline: true },
     { name: "Key prefix", value: `\`${license.keyPrefix}…\``, inline: true },
     { name: "License ID", value: `\`${license.id}\`` }
   ];
 
+  if (license.plan === "trial" && license.activationDurationSeconds) {
+    fields.splice(4, 0, {
+      name: "Timed access",
+      value: durationText(license.activationDurationSeconds),
+      inline: true
+    });
+  }
+  if (license.activatedAt) {
+    fields.push({ name: "First activated", value: discordTime(license.activatedAt), inline: true });
+  }
   if (license.matchedDevice) {
     fields.push(
       { name: "Matched by", value: "Device ID", inline: true },
