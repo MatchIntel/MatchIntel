@@ -210,6 +210,8 @@ button { cursor: pointer; }
 .key-panel { margin-top: 28px; padding: 20px; border: 1px solid rgba(22, 140, 255, .32); border-radius: 14px; background: rgba(4, 12, 23, .82); }
 .key-panel > span { display: block; color: #8ca2c0; font-size: 9px; font-weight: 900; letter-spacing: .14em; }
 .key-panel code { display: block; margin: 13px 0 18px; color: var(--blue-bright); font: 700 18px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.recovery-note { margin: 14px auto 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.recovery-note code { color: var(--blue-bright); font-weight: 800; }
 .result-meta { margin-top: 18px; padding: 16px; display: grid; grid-template-columns: auto 1fr; gap: 9px 16px; border: 1px solid var(--line); border-radius: 12px; text-align: left; font-size: 12px; }
 .result-meta span { color: var(--muted); }
 .result-meta strong { text-align: right; overflow-wrap: anywhere; }

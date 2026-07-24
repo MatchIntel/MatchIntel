@@ -191,10 +191,12 @@ app.get("/auth/discord/callback", trialLimiter, async (req, res) => {
     res.status(200).send(renderResult({
       title: "Free Trial Ready",
       heading: `Your ${issued.trialDays || config.freeTrialDays}-day free trial is ready`,
-      message: "Copy the key below and paste it into MatchIntel to activate your trial.",
+      message: "Copy the key below and paste it into MatchIntel. Your full trial time starts only after the first successful activation in the app.",
       tone: "success",
       licenseKey: issued.licenseKey,
       expiresAt: issued.license?.expiresAt,
+      trialDays: issued.trialDays || issued.license?.activationDurationDays || config.freeTrialDays,
+      pendingActivation: Boolean(issued.license?.pendingActivation),
       discordUsername
     }));
   } catch (error) {
@@ -287,7 +289,7 @@ async function readJson(response) {
 
 function friendlyBackendMessage(body, status) {
   if (body?.code === "MI-TRIAL-DISCORD-USED") {
-    return "This Discord account has already used its MatchIntel free trial.";
+    return "This Discord account has already received its MatchIntel free trial. DM the MatchIntel bot and use /whatsmytrialkey to recover the exact same key.";
   }
   if (body?.code === "MI-DATABASE-STARTING") {
     return "The trial system is starting up. Wait a moment and try again.";
@@ -316,16 +318,25 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function renderResult({ title, heading, message, tone, licenseKey, expiresAt, discordUsername }) {
+function renderResult({ title, heading, message, tone, licenseKey, expiresAt, trialDays, pendingActivation, discordUsername }) {
+  const activationText = pendingActivation
+    ? "First successful activation in the MatchIntel app"
+    : "Already activated";
+  const expiryText = expiresAt
+    ? new Date(expiresAt).toLocaleString("en-US", { timeZone: "UTC", timeZoneName: "short" })
+    : "Not counting down yet";
   const keyBlock = licenseKey ? `
     <div class="key-panel">
       <span>LICENSE KEY</span>
       <code id="licenseKey">${escapeHtml(licenseKey)}</code>
       <button id="copyKey" class="button primary" type="button">Copy license key</button>
     </div>
+    <p class="recovery-note">Lost this page? DM the MatchIntel Discord bot and use <code>/whatsmytrialkey</code> to recover this exact same key.</p>
     <div class="result-meta">
       <span>Discord</span><strong>${escapeHtml(discordUsername || "Connected")}</strong>
-      <span>Expires</span><strong>${escapeHtml(expiresAt ? new Date(expiresAt).toLocaleString("en-US", { timeZone: "UTC", timeZoneName: "short" }) : "Trial period")}</strong>
+      <span>Trial length</span><strong>${escapeHtml(`${trialDays || "Configured"}${trialDays ? ` day${Number(trialDays) === 1 ? "" : "s"}` : ""}`)}</strong>
+      <span>Timer starts</span><strong>${escapeHtml(activationText)}</strong>
+      <span>Expires</span><strong>${escapeHtml(expiryText)}</strong>
     </div>` : "";
 
   return `<!doctype html>
