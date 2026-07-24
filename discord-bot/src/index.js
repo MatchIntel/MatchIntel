@@ -469,7 +469,7 @@ client.on("guildMemberAdd", member => {
 });
 
 client.once("ready", () => {
-  console.log(`MatchIntel bot 0.7.2 logged in as ${client.user.tag}`);
+  console.log(`MatchIntel bot 0.7.3 logged in as ${client.user.tag}`);
   console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
   if (!config.staffRoles.size) console.warn("BOT_STAFF_ROLE_IDS is empty. Only owners/admin-role users can access commands.");
   let releaseTimer = null;

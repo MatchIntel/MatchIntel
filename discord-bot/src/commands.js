@@ -160,7 +160,7 @@ const commandBuilders = [
 
   new SlashCommandBuilder()
     .setName("setuptickets")
-    .setDescription("Post the MatchIntel ticket panel in this channel")
+    .setDescription("Post the MatchIntel ticket-type panel in this channel")
     .addChannelOption(option => option.setName("category").setDescription("Category where private tickets are created").addChannelTypes(ChannelType.GuildCategory))
     .addRoleOption(option => option.setName("support_role").setDescription("Support or staff role that can view tickets"))
     .addRoleOption(option => option.setName("mod_role").setDescription("Moderator role that can view tickets"))

@@ -173,10 +173,51 @@ function ticketClosedButtons() {
   );
 }
 
-function ticketPanelButton() {
+const TICKET_TYPES = Object.freeze({
+  general: Object.freeze({
+    key: "general",
+    buttonId: "mi_ticket_create_general",
+    label: "General Support",
+    emoji: "🎫",
+    style: ButtonStyle.Primary,
+    channelPrefix: "general-support",
+    title: "General Support Ticket",
+    description: "Tell us what you need help with and attach any relevant screenshots or files."
+  }),
+  purchase: Object.freeze({
+    key: "purchase",
+    buttonId: "mi_ticket_create_purchase",
+    label: "Purchase MatchIntel",
+    emoji: "🛒",
+    style: ButtonStyle.Success,
+    channelPrefix: "purchase",
+    title: "Purchase MatchIntel Ticket",
+    description: "Tell us what you would like to purchase or ask about plans, payment, or getting started."
+  }),
+  bug: Object.freeze({
+    key: "bug",
+    buttonId: "mi_ticket_create_bug",
+    label: "Report a Bug",
+    emoji: "🐛",
+    style: ButtonStyle.Danger,
+    channelPrefix: "bug-report",
+    title: "Bug Report Ticket",
+    description: "Describe the bug, what you expected, what happened, and attach screenshots, logs, or steps to reproduce it."
+  })
+});
+
+function ticketPanelButtons() {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("mi_ticket_create").setLabel("Open a ticket").setEmoji("🎫").setStyle(ButtonStyle.Primary)
+    ...Object.values(TICKET_TYPES).map(type => new ButtonBuilder()
+      .setCustomId(type.buttonId)
+      .setLabel(type.label)
+      .setEmoji(type.emoji)
+      .setStyle(type.style))
   );
+}
+
+function ticketTypeFromCustomId(customId) {
+  return Object.values(TICKET_TYPES).find(type => type.buttonId === customId) || TICKET_TYPES.general;
 }
 
 export async function handleSetupTickets(interaction) {
@@ -213,15 +254,14 @@ export async function handleSetupTickets(interaction) {
     embeds: [new EmbedBuilder()
       .setColor(COLORS.blue)
       .setTitle(interaction.options.getString("title") || "MatchIntel Support")
-      .setDescription(interaction.options.getString("message") || "Need help with your key, installation, account, or MatchIntel? Press the button below to create a private support ticket.")
-      .addFields({ name: "Privacy", value: "Only you and the configured MatchIntel staff, moderator, admin, and owner team can see your ticket." })
-      .setFooter({ text: "Please open one ticket per issue." })],
-    components: [ticketPanelButton()]
+      .setDescription(interaction.options.getString("message") || "Choose the option below that best matches what you need. Please open one ticket per issue.")
+      .setFooter({ text: "A MatchIntel staff member will respond as soon as possible." })],
+    components: [ticketPanelButtons()]
   });
   await interaction.editReply(`Ticket panel created: ${panel.url}`);
 }
 
-async function createTicket(interaction) {
+async function createTicket(interaction, ticketType = TICKET_TYPES.general) {
   const guild = interaction.guild;
   const settings = await getGuildSettings(guild.id, { fresh: true });
   if (!settings.ticketCategoryId) {
@@ -279,21 +319,22 @@ async function createTicket(interaction) {
 
   const base = cleanChannelName(interaction.user.globalName || interaction.user.username);
   const channel = await guild.channels.create({
-    name: `ticket-${base}-${String(Date.now()).slice(-4)}`,
+    name: `${ticketType.channelPrefix}-${base}-${String(Date.now()).slice(-4)}`,
     type: ChannelType.GuildText,
     parent: settings.ticketCategoryId,
     topic: ticketTopic(interaction.user.id),
     permissionOverwrites: [...permissionMap.values()],
-    reason: `MatchIntel support ticket opened by ${interaction.user.tag}`
+    reason: `MatchIntel ${ticketType.label.toLowerCase()} ticket opened by ${interaction.user.tag}`
   });
 
   await channel.send({
     content: `<@${interaction.user.id}>`,
     embeds: [new EmbedBuilder()
       .setColor(COLORS.blue)
-      .setTitle("Your MatchIntel ticket is open")
-      .setDescription("Describe the issue and attach screenshots or files that help explain it. A staff member can claim the ticket and respond here.")
+      .setTitle(ticketType.title)
+      .setDescription(`${ticketType.description} A staff member can claim the ticket and respond here.`)
       .addFields(
+        { name: "Ticket type", value: `${ticketType.emoji} ${ticketType.label}`, inline: true },
         { name: "Opened by", value: `<@${interaction.user.id}>`, inline: true },
         { name: "Created", value: discordTime(new Date()), inline: true }
       )
@@ -354,7 +395,11 @@ async function deleteTicket(interaction) {
 
 export async function handleTicketButton(interaction) {
   switch (interaction.customId) {
-    case "mi_ticket_create": return createTicket(interaction);
+    case "mi_ticket_create": return createTicket(interaction, TICKET_TYPES.general); // Backward compatibility for older panels.
+    case "mi_ticket_create_general":
+    case "mi_ticket_create_purchase":
+    case "mi_ticket_create_bug":
+      return createTicket(interaction, ticketTypeFromCustomId(interaction.customId));
     case "mi_ticket_claim": return claimTicket(interaction);
     case "mi_ticket_close": return closeTicket(interaction);
     case "mi_ticket_reopen": return reopenTicket(interaction);
