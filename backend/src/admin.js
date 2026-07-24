@@ -1,6 +1,6 @@
 import { query, tx } from "./db.js";
 import { config } from "./config.js";
-import { createLicenseKey, decryptLicenseKey, encryptLicenseKey, hashDevice, parseDuration, randomUuid, sha256 } from "./security.js";
+import { createLicenseKey, decryptLicenseKey, encryptLicenseKey, hashDevice, randomUuid, sha256 } from "./security.js";
 import { getRuntimeSettings, setMaintenance, setVersionControl } from "./appSettings.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -60,8 +60,8 @@ function deletionCondition(scope) {
 
 function extensionCondition(scope) {
   return {
-    all: "plan='trial' AND expires_at IS NOT NULL",
-    active: "plan='trial' AND status='active' AND expires_at>NOW()",
+    all: "plan='trial'",
+    active: "plan='trial' AND status='active' AND (expires_at IS NULL OR expires_at>NOW())",
     revoked: "plan='trial' AND status='revoked'",
     expired: "plan='trial' AND expires_at IS NOT NULL AND expires_at<=NOW()"
   }[scope];
@@ -78,13 +78,25 @@ function discordIdFrom(value) {
 function serializeLicense(row, { includeFullKey = false } = {}) {
   if (!row) return null;
   const fullKey = includeFullKey ? decryptLicenseKey(row.key_ciphertext) : null;
+  const durationSeconds = Number(row.activation_duration_seconds);
+  const activationDurationSeconds = Number.isFinite(durationSeconds) && durationSeconds > 0
+    ? Math.floor(durationSeconds)
+    : null;
+  const pendingActivation = row.plan === "trial"
+    && !row.expires_at
+    && !row.activated_at
+    && Boolean(activationDurationSeconds);
   return {
     id: row.id,
     keyPrefix: row.key_prefix,
     ...(includeFullKey ? { fullKey, fullKeyAvailable: Boolean(fullKey) } : {}),
     plan: row.plan,
+    isFreeTrial: Boolean(row.is_free_trial),
     status: row.status,
     expiresAt: row.expires_at,
+    activatedAt: row.activated_at,
+    activationDurationSeconds,
+    pendingActivation,
     maxDevices: row.max_devices,
     features: row.features || [],
     note: row.note || "",
@@ -181,7 +193,8 @@ export async function create(req, res) {
     const discordUsername = clean(req.body?.discordUsername, 100) || discordUserId;
     const issuedByDiscordId = discordIdFrom(req.body?.issuedByDiscordId || req.headers["x-admin-actor"]);
     const trialDays = plan === "trial" ? trialDaysFrom(req.body?.trialDays) : null;
-    const expiresAt = plan === "trial" ? parseDuration(`${trialDays}d`) : null;
+    const activationDurationSeconds = plan === "trial" ? trialDays * 86_400 : null;
+    const expiresAt = null;
     const maxDevices = Math.max(1, Math.min(25, Number(req.body?.maxDevices || 1)));
     const features = Array.isArray(req.body?.features)
       ? req.body.features.map(String).slice(0, 40)
@@ -193,16 +206,18 @@ export async function create(req, res) {
     await tx(async client => {
       await client.query(
         `INSERT INTO licenses(
-          id,key_hash,key_prefix,key_ciphertext,plan,expires_at,max_devices,features,note,
-          discord_user_id,discord_username,issued_by_discord_id
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          id,key_hash,key_prefix,key_ciphertext,plan,expires_at,activation_duration_seconds,
+          activated_at,max_devices,features,note,discord_user_id,discord_username,issued_by_discord_id
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11,$12,$13)`,
         [
-          id, sha256(key), key.slice(0, 12), encryptLicenseKey(key), plan, expiresAt, maxDevices,
-          JSON.stringify(features), note, discordUserId, discordUsername, issuedByDiscordId
+          id, sha256(key), key.slice(0, 12), encryptLicenseKey(key), plan, expiresAt,
+          activationDurationSeconds, maxDevices, JSON.stringify(features), note,
+          discordUserId, discordUsername, issuedByDiscordId
         ]
       );
       await audit("license.create", issuedByDiscordId, id, {
-        plan, trialDays, maxDevices, discordUserId, discordUsername
+        plan, trialDays, maxDevices, discordUserId, discordUsername,
+        activationTiming: plan === "trial" ? "on-first-successful-app-activation" : "lifetime"
       }, client.query.bind(client));
     });
 
@@ -215,6 +230,9 @@ export async function create(req, res) {
         plan,
         status: "active",
         expires_at: expiresAt,
+        activated_at: null,
+        activation_duration_seconds: activationDurationSeconds,
+        is_free_trial: false,
         max_devices: maxDevices,
         features,
         note,
@@ -366,6 +384,56 @@ export async function revealUserLicenses(req, res) {
     res.json({ discordUserId: userId, licenses });
   } catch (error) {
     sendError(res, error, "MI-KEY-SELF-REVEAL");
+  }
+}
+
+export async function revealWebsiteTrial(req, res) {
+  try {
+    const userId = discordIdFrom(req.params.discordUserId);
+    const actor = clean(req.headers["x-admin-actor"] || "discord-bot", 200);
+    const result = await query(
+      `SELECT c.created_at AS claim_created_at,l.*,
+        (SELECT COUNT(*)::int FROM devices d WHERE d.license_id=l.id) AS device_count
+       FROM website_trial_claims c
+       LEFT JOIN licenses l ON l.id=c.license_id
+       WHERE c.discord_user_id=$1
+       ORDER BY c.created_at DESC
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (!result.rowCount) {
+      return res.json({ discordUserId: userId, claimed: false, trial: null });
+    }
+
+    const row = result.rows[0];
+    if (!row.id) {
+      await audit("license.reveal_website_trial_missing", actor, userId, {
+        claimedAt: row.claim_created_at
+      });
+      return res.json({
+        discordUserId: userId,
+        claimed: true,
+        recoverable: false,
+        claimedAt: row.claim_created_at,
+        trial: null
+      });
+    }
+
+    const trial = serializeLicense(row, { includeFullKey: true });
+    await audit("license.reveal_website_trial", actor, row.id, {
+      discordUserId: userId,
+      recoverable: trial.fullKeyAvailable
+    });
+    res.json({
+      discordUserId: userId,
+      claimed: true,
+      recoverable: trial.fullKeyAvailable,
+      claimedAt: row.claim_created_at,
+      trial
+    });
+  } catch (error) {
+    sendError(res, error, "MI-WEBSITE-TRIAL-SELF-REVEAL");
   }
 }
 
@@ -533,7 +601,8 @@ export async function convertLifetime(req, res) {
       const current = await resolveLicense(client.query.bind(client), req.params.ref, { forUpdate: true });
       const result = await client.query(
         `UPDATE licenses
-         SET plan='lifetime',expires_at=NULL,status='active',revoked_reason=NULL,revoked_at=NULL,
+         SET plan='lifetime',expires_at=NULL,activation_duration_seconds=NULL,
+             status='active',revoked_reason=NULL,revoked_at=NULL,
              plan_changed_at=NOW(),updated_at=NOW()
          WHERE id=$1 RETURNING *`,
         [current.id]
@@ -656,17 +725,23 @@ export async function extendLicense(req, res) {
     const days = extensionDaysFrom(req.body?.days);
     const license = await tx(async client => {
       const current = await resolveLicense(client.query.bind(client), req.params.ref, { forUpdate: true });
-      if (current.plan !== "trial" || !current.expires_at) {
+      if (current.plan !== "trial") {
         throw httpError(409, "MI-LIFETIME-NO-EXPIRY", "Lifetime keys do not expire and cannot be extended.");
       }
       const result = await client.query(
         `UPDATE licenses
-         SET expires_at=GREATEST(expires_at,NOW()) + ($2::int * INTERVAL '1 day'),updated_at=NOW()
+         SET activation_duration_seconds=COALESCE(activation_duration_seconds,0) + ($2::bigint * 86400),
+             expires_at=CASE
+               WHEN expires_at IS NULL THEN NULL
+               ELSE GREATEST(expires_at,NOW()) + ($2::int * INTERVAL '1 day')
+             END,
+             updated_at=NOW()
          WHERE id=$1 RETURNING *`,
         [current.id, days]
       );
       await audit("license.extend", actor, current.id, {
         days,
+        pendingActivation: !current.expires_at,
         previousExpiresAt: current.expires_at,
         newExpiresAt: result.rows[0].expires_at,
         discordUserId: current.discord_user_id
@@ -688,13 +763,19 @@ export async function extendBulk(req, res) {
     const result = await tx(async client => {
       const before = await client.query(
         `SELECT COUNT(*)::int total,
+          COUNT(*) FILTER (WHERE expires_at IS NULL)::int pending_activation,
           COUNT(*) FILTER (WHERE expires_at<=NOW())::int expired,
           COUNT(*) FILTER (WHERE status='revoked')::int revoked
          FROM licenses WHERE ${condition}`
       );
       const changed = await client.query(
         `UPDATE licenses
-         SET expires_at=GREATEST(expires_at,NOW()) + ($1::int * INTERVAL '1 day'),updated_at=NOW()
+         SET activation_duration_seconds=COALESCE(activation_duration_seconds,0) + ($1::bigint * 86400),
+             expires_at=CASE
+               WHEN expires_at IS NULL THEN NULL
+               ELSE GREATEST(expires_at,NOW()) + ($1::int * INTERVAL '1 day')
+             END,
+             updated_at=NOW()
          WHERE ${condition}
          RETURNING id`,
         [days]
@@ -703,6 +784,7 @@ export async function extendBulk(req, res) {
         scope,
         days,
         licensesExtended: changed.rowCount,
+        pendingActivationExtended: before.rows[0].pending_activation,
         previouslyExpired: before.rows[0].expired,
         revokedIncluded: before.rows[0].revoked
       }, client.query.bind(client));
@@ -710,6 +792,7 @@ export async function extendBulk(req, res) {
         scope,
         days,
         licensesExtended: changed.rowCount,
+        pendingActivationExtended: before.rows[0].pending_activation,
         previouslyExpired: before.rows[0].expired,
         revokedIncluded: before.rows[0].revoked
       };

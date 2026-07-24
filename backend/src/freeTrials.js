@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { createLicenseKey, encryptLicenseKey, randomUuid, sha256 } from "./security.js";
 
 const ALL_FEATURES = ["live_lobby", "enrichment", "history", "reports"];
+const SECONDS_PER_DAY = 86_400;
 
 function httpError(status, code, message) {
   return Object.assign(new Error(message), { status, code });
@@ -32,10 +33,10 @@ export async function issueWebsiteTrial(req, res) {
     const discordUserId = discordIdFrom(req.body?.discordUserId);
     const discordUsername = clean(req.body?.discordUsername || discordUserId, 100);
     const days = config.freeTrialDays;
+    const activationDurationSeconds = days * SECONDS_PER_DAY;
     const licenseKey = createLicenseKey();
     const licenseId = randomUuid();
     const claimId = randomUuid();
-    const expiresAt = new Date(Date.now() + days * 86_400_000);
 
     const result = await tx(async client => {
       // Prevent two simultaneous OAuth callbacks for the same Discord account.
@@ -52,21 +53,22 @@ export async function issueWebsiteTrial(req, res) {
         throw httpError(
           409,
           "MI-TRIAL-DISCORD-USED",
-          "This Discord account has already received a MatchIntel free trial."
+          "This Discord account has already received a MatchIntel free trial. DM the MatchIntel bot and use /whatsmytrialkey to recover it."
         );
       }
 
       await client.query(
         `INSERT INTO licenses(
-          id,key_hash,key_prefix,key_ciphertext,plan,status,expires_at,max_devices,features,note,
+          id,key_hash,key_prefix,key_ciphertext,plan,status,expires_at,
+          activation_duration_seconds,activated_at,max_devices,features,note,
           discord_user_id,discord_username,issued_by_discord_id,is_free_trial
-        ) VALUES($1,$2,$3,$4,'trial','active',$5,1,$6,$7,$8,$9,$8,TRUE)`,
+        ) VALUES($1,$2,$3,$4,'trial','active',NULL,$5,NULL,1,$6,$7,$8,$9,$8,TRUE)`,
         [
           licenseId,
           sha256(licenseKey),
           licenseKey.slice(0, 12),
           encryptLicenseKey(licenseKey),
-          expiresAt,
+          activationDurationSeconds,
           JSON.stringify(ALL_FEATURES),
           "Automatically issued by the MatchIntel website free-trial flow.",
           discordUserId,
@@ -84,6 +86,7 @@ export async function issueWebsiteTrial(req, res) {
       await audit(client, "website.free_trial.issue", discordUserId, licenseId, {
         discordUsername,
         days,
+        activationTiming: "on-first-successful-app-activation",
         deviceBinding: "on-first-app-activation"
       });
 
@@ -94,7 +97,11 @@ export async function issueWebsiteTrial(req, res) {
           plan: "trial",
           isFreeTrial: true,
           status: "active",
-          expiresAt,
+          expiresAt: null,
+          activatedAt: null,
+          activationDurationSeconds,
+          activationDurationDays: days,
+          pendingActivation: true,
           maxDevices: 1,
           features: ALL_FEATURES,
           discordUserId,
@@ -108,7 +115,7 @@ export async function issueWebsiteTrial(req, res) {
     if (error?.code === "23505") {
       return res.status(409).json({
         code: "MI-TRIAL-DISCORD-USED",
-        message: "This Discord account has already received a MatchIntel free trial."
+        message: "This Discord account has already received a MatchIntel free trial. DM the MatchIntel bot and use /whatsmytrialkey to recover it."
       });
     }
     res.status(error.status || 500).json({

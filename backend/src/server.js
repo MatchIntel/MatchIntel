@@ -52,7 +52,7 @@ app.get("/health", async (_req, res) => {
   res.status(200).json({
     status: "ok",
     service: "matchintel-backend",
-    version: "0.7.2",
+    version: "0.7.4",
     uptimeSeconds: Math.floor(process.uptime()),
     configuration: missingEnvironment.length ? "incomplete" : "ready",
     missingEnvironment,
@@ -90,7 +90,7 @@ app.get("/ready", async (_req, res) => {
   }
   try {
     await pool.query("SELECT 1");
-    res.json({ status: "ready", database: "ready", version: "0.7.2" });
+    res.json({ status: "ready", database: "ready", version: "0.7.4" });
   } catch (error) {
     res.status(503).json({
       status: "not-ready",
@@ -180,6 +180,7 @@ app.post("/v1/admin/licenses/:ref/convert-lifetime", requireAdmin, admin.convert
 app.post("/v1/admin/licenses/:ref/transfer", requireAdmin, admin.transfer);
 app.get("/v1/admin/users/:discordUserId/licenses", requireAdmin, admin.userLicenses);
 app.get("/v1/admin/users/:discordUserId/licenses/reveal", requireAdmin, admin.revealUserLicenses);
+app.get("/v1/admin/users/:discordUserId/website-trial/reveal", requireAdmin, admin.revealWebsiteTrial);
 app.post("/v1/admin/users/:discordUserId/reset-devices", requireAdmin, admin.resetUser);
 app.post("/v1/admin/users/:discordUserId/revoke", requireAdmin, admin.revokeUser);
 app.post("/v1/admin/maintenance", requireAdmin, admin.maintenance);
@@ -199,7 +200,7 @@ app.use((error, _req, res, _next) => {
 const server = http.createServer(app);
 app.locals.broadcast = attach(server);
 server.listen(config.port, "0.0.0.0", () => {
-  console.log(`MatchIntel backend 0.7.2 listening on 0.0.0.0:${config.port}`);
+  console.log(`MatchIntel backend 0.7.4 listening on 0.0.0.0:${config.port}`);
   const missingEnvironment = missingRequiredEnvironment();
   if (missingEnvironment.length) {
     console.error(`[configuration] Missing required Railway variable(s): ${missingEnvironment.join(", ")}`);

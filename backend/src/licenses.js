@@ -3,15 +3,31 @@ import { config } from "./config.js";
 import { getRuntimeSettings, isVersionOutdated, updatePayload } from "./appSettings.js";
 import { hashDevice, randomToken, randomUuid, sha256, signAccess } from "./security.js";
 
-const pub = license => ({
-  id: license.id,
-  plan: license.plan,
-  isFreeTrial: Boolean(license.is_free_trial),
-  status: license.status,
-  expiresAt: license.expires_at,
-  maxDevices: license.max_devices,
-  features: license.features || []
-});
+function activationDurationSeconds(license) {
+  const seconds = Number(license?.activation_duration_seconds);
+  return Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : null;
+}
+
+const pub = license => {
+  const durationSeconds = activationDurationSeconds(license);
+  const pendingActivation = license.plan === "trial"
+    && !license.expires_at
+    && !license.activated_at
+    && Boolean(durationSeconds);
+
+  return {
+    id: license.id,
+    plan: license.plan,
+    isFreeTrial: Boolean(license.is_free_trial),
+    status: license.status,
+    expiresAt: license.expires_at,
+    activatedAt: license.activated_at,
+    activationDurationSeconds: durationSeconds,
+    pendingActivation,
+    maxDevices: license.max_devices,
+    features: license.features || []
+  };
+};
 
 async function tokens(client, license, deviceHash) {
   const accessToken = signAccess(license, deviceHash);
@@ -24,6 +40,29 @@ async function tokens(client, license, deviceHash) {
   return { accessToken, refreshToken };
 }
 
+export async function startTimedLicenseIfNeeded(client, license) {
+  if (license.plan !== "trial" || license.expires_at) return license;
+
+  const seconds = activationDurationSeconds(license);
+  if (!seconds) {
+    throw Object.assign(
+      new Error("This timed key is missing its activation duration. Please contact MatchIntel support."),
+      { status: 500, code: "MI-ACTIVATION-DURATION-MISSING" }
+    );
+  }
+
+  const result = await client.query(
+    `UPDATE licenses
+     SET activated_at=COALESCE(activated_at,NOW()),
+         expires_at=COALESCE(expires_at,NOW() + ($2::bigint * INTERVAL '1 second')),
+         updated_at=NOW()
+     WHERE id=$1
+     RETURNING *`,
+    [license.id, seconds]
+  );
+
+  return result.rows[0] || license;
+}
 
 export async function enforceFreeTrialDevice(client, license, deviceHash) {
   if (!license.is_free_trial) return;
@@ -140,7 +179,14 @@ export async function activate(req, res) {
           [license.id, deviceHash, String(deviceName || "").slice(0, 160)]
         );
       }
-      return { ...(await tokens(client, license, deviceHash)), license: pub(license) };
+
+      // The timer begins only after every activation check above succeeds. Any
+      // later error rolls back the device binding and timestamp together.
+      const activatedLicense = await startTimedLicenseIfNeeded(client, license);
+      return {
+        ...(await tokens(client, activatedLicense, deviceHash)),
+        license: pub(activatedLicense)
+      };
     });
     res.json(answer);
   } catch (error) {
