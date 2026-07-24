@@ -168,6 +168,21 @@ const commandBuilders = [
     .addStringOption(option => option.setName("message").setDescription("Ticket panel instructions").setMaxLength(2000)),
 
   new SlashCommandBuilder()
+    .setName("paymentreminder")
+    .setDescription("Control payment safety reminders in purchase tickets")
+    .addSubcommand(sub => sub
+      .setName("global")
+      .setDescription("Enable or disable reminders across every purchase ticket")
+      .addBooleanOption(option => option.setName("enabled").setDescription("Whether reminders are enabled globally").setRequired(true)))
+    .addSubcommand(sub => sub
+      .setName("ticket")
+      .setDescription("Enable or disable reminders in this purchase ticket")
+      .addBooleanOption(option => option.setName("enabled").setDescription("Whether reminders are enabled in this ticket").setRequired(true)))
+    .addSubcommand(sub => sub
+      .setName("status")
+      .setDescription("Show the global and current-ticket reminder status")),
+
+  new SlashCommandBuilder()
     .setName("sendthismessage")
     .setDescription("Send a message or files as MatchIntel Helper in this channel")
     .addStringOption(option => option.setName("message").setDescription("Message text").setMaxLength(4000))
@@ -187,7 +202,7 @@ const commandBuilders = [
       { name: "Website", value: "Website" },
       { name: "Multiple components", value: "Multiple components" }
     ))
-    .addStringOption(option => option.setName("version").setDescription("Version label, such as 0.7.4").setRequired(true).setMaxLength(50))
+    .addStringOption(option => option.setName("version").setDescription("Version label, such as 0.7.5").setRequired(true).setMaxLength(50))
     .addStringOption(option => option.setName("summary").setDescription("Full update notes").setRequired(true).setMaxLength(4000))
     .addAttachmentOption(option => option.setName("file").setDescription("Optional release file or image"))
     .addChannelOption(option => option.setName("channel").setDescription("Defaults to the configured MatchIntel updates channel").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))

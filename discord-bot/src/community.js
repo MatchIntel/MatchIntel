@@ -10,6 +10,14 @@ import { api } from "./api.js";
 import { canUse, accessLevel } from "./access.js";
 import { config } from "./config.js";
 import { COLORS, discordTime, durationText, licenseExpiryText, licenseStatusText, truncate } from "./format.js";
+import {
+  PAYMENT_REMINDER_COOLDOWN_MS,
+  globalPaymentRemindersEnabled,
+  parseTicketTopic,
+  paymentMessageMatches,
+  ticketTopic,
+  topicWithGlobalPaymentSetting
+} from "./paymentSafety.js";
 
 const settingsCache = new Map();
 const SETTINGS_TTL_MS = 30_000;
@@ -150,14 +158,7 @@ export async function handleGuildMemberAdd(member) {
   }
 }
 
-function ticketTopic(userId, status = "open", claimedBy = "") {
-  return `matchintel-ticket:${userId}:${status}${claimedBy ? `:${claimedBy}` : ""}`;
-}
-
-function parseTicketTopic(topic) {
-  const match = /^matchintel-ticket:(\d{15,25}):(open|closed)(?::(\d{15,25}))?$/.exec(String(topic || ""));
-  return match ? { userId: match[1], status: match[2], claimedBy: match[3] || "" } : null;
-}
+const paymentReminderCooldowns = new Map();
 
 function ticketOpenButtons() {
   return new ActionRowBuilder().addComponents(
@@ -322,7 +323,7 @@ async function createTicket(interaction, ticketType = TICKET_TYPES.general) {
     name: `${ticketType.channelPrefix}-${base}-${String(Date.now()).slice(-4)}`,
     type: ChannelType.GuildText,
     parent: settings.ticketCategoryId,
-    topic: ticketTopic(interaction.user.id),
+    topic: ticketTopic(interaction.user.id, "open", "", ticketType.key, true),
     permissionOverwrites: [...permissionMap.values()],
     reason: `MatchIntel ${ticketType.label.toLowerCase()} ticket opened by ${interaction.user.tag}`
   });
@@ -336,7 +337,11 @@ async function createTicket(interaction, ticketType = TICKET_TYPES.general) {
       .addFields(
         { name: "Ticket type", value: `${ticketType.emoji} ${ticketType.label}`, inline: true },
         { name: "Opened by", value: `<@${interaction.user.id}>`, inline: true },
-        { name: "Created", value: discordTime(new Date()), inline: true }
+        { name: "Created", value: discordTime(new Date()), inline: true },
+        ...(ticketType.key === "purchase" ? [
+          { name: "Official PayPal", value: `\`${config.paypalEmail}\`` },
+          { name: "Payment safety", value: "Only configured MatchIntel owners can accept money. Never send payment to an admin, moderator, support agent, staff member, or anyone else claiming to collect money for MatchIntel." }
+        ] : [])
       )
       .setFooter({ text: "Never post your license key publicly. Use /whatsmykey or /whatsmytrialkey only in the bot's DMs." })],
     components: [ticketOpenButtons()],
@@ -349,7 +354,13 @@ async function claimTicket(interaction) {
   if (!canUse(interaction, "staff")) return interaction.reply({ content: "Only MatchIntel staff can claim tickets.", ephemeral: true });
   const parsed = parseTicketTopic(interaction.channel?.topic);
   if (!parsed || parsed.status !== "open") return interaction.reply({ content: "This is not an open MatchIntel ticket.", ephemeral: true });
-  await interaction.channel.setTopic(ticketTopic(parsed.userId, "open", interaction.user.id));
+  await interaction.channel.setTopic(ticketTopic(
+    parsed.userId,
+    "open",
+    interaction.user.id,
+    ticketTypeForChannel(interaction.channel, parsed),
+    parsed.paymentReminderEnabled
+  ));
   await interaction.channel.send({ embeds: [new EmbedBuilder().setColor(COLORS.green).setDescription(`✅ Ticket claimed by <@${interaction.user.id}>.`)] });
   await interaction.reply({ content: "Ticket claimed.", ephemeral: true });
 }
@@ -360,7 +371,13 @@ async function closeTicket(interaction) {
   const isOwner = parsed.userId === interaction.user.id;
   if (!isOwner && !canUse(interaction, "staff")) return interaction.reply({ content: "Only the ticket opener or MatchIntel staff can close this ticket.", ephemeral: true });
   await interaction.channel.permissionOverwrites.edit(parsed.userId, { ViewChannel: true, SendMessages: false });
-  await interaction.channel.setTopic(ticketTopic(parsed.userId, "closed", parsed.claimedBy));
+  await interaction.channel.setTopic(ticketTopic(
+    parsed.userId,
+    "closed",
+    parsed.claimedBy,
+    ticketTypeForChannel(interaction.channel, parsed),
+    parsed.paymentReminderEnabled
+  ));
   if (!interaction.channel.name.startsWith("closed-")) await interaction.channel.setName(`closed-${interaction.channel.name}`.slice(0, 100));
   await interaction.channel.send({
     embeds: [new EmbedBuilder().setColor(COLORS.yellow).setDescription(`🔒 Ticket closed by <@${interaction.user.id}>.`)],
@@ -374,7 +391,13 @@ async function reopenTicket(interaction) {
   const parsed = parseTicketTopic(interaction.channel?.topic);
   if (!parsed || parsed.status !== "closed") return interaction.reply({ content: "This is not a closed MatchIntel ticket.", ephemeral: true });
   await interaction.channel.permissionOverwrites.edit(parsed.userId, { ViewChannel: true, SendMessages: true });
-  await interaction.channel.setTopic(ticketTopic(parsed.userId, "open", parsed.claimedBy));
+  await interaction.channel.setTopic(ticketTopic(
+    parsed.userId,
+    "open",
+    parsed.claimedBy,
+    ticketTypeForChannel(interaction.channel, parsed),
+    parsed.paymentReminderEnabled
+  ));
   await interaction.channel.setName(interaction.channel.name.replace(/^closed-/, "").slice(0, 100));
   await interaction.channel.send({
     embeds: [new EmbedBuilder().setColor(COLORS.green).setDescription(`🔓 Ticket reopened by <@${interaction.user.id}>.`)],
@@ -405,6 +428,109 @@ export async function handleTicketButton(interaction) {
     case "mi_ticket_reopen": return reopenTicket(interaction);
     case "mi_ticket_delete": return deleteTicket(interaction);
     default: return false;
+  }
+}
+
+async function configuredTicketPanelChannel(guild, settings) {
+  if (!settings.ticketPanelChannelId) return null;
+  return guild.channels.cache.get(settings.ticketPanelChannelId)
+    || await guild.channels.fetch(settings.ticketPanelChannelId).catch(() => null);
+}
+
+async function readGlobalPaymentReminderState(guild, settings = null) {
+  const currentSettings = settings || await getGuildSettings(guild.id);
+  const panelChannel = await configuredTicketPanelChannel(guild, currentSettings);
+  return {
+    enabled: globalPaymentRemindersEnabled(panelChannel?.topic),
+    panelChannel
+  };
+}
+
+export async function handlePaymentReminder(interaction) {
+  if (!interaction.guild) throw new Error("Use this command inside the MatchIntel server.");
+  const subcommand = interaction.options.getSubcommand();
+  const settings = await getGuildSettings(interaction.guild.id, { fresh: true });
+  const globalState = await readGlobalPaymentReminderState(interaction.guild, settings);
+
+  if (subcommand === "global") {
+    const enabled = interaction.options.getBoolean("enabled", true);
+    if (!globalState.panelChannel || typeof globalState.panelChannel.setTopic !== "function") {
+      throw new Error("Run `/setuptickets` again so the bot has a ticket panel channel for storing this setting.");
+    }
+    await globalState.panelChannel.setTopic(
+      topicWithGlobalPaymentSetting(globalState.panelChannel.topic, enabled),
+      `Payment reminder setting changed by ${interaction.user.tag}`
+    );
+    return interaction.editReply(`Purchase-ticket payment reminders are now **${enabled ? "enabled" : "disabled"} globally**.`);
+  }
+
+  const parsed = parseTicketTopic(interaction.channel?.topic);
+  const ticketType = ticketTypeForChannel(interaction.channel, parsed);
+  const isPurchaseTicket = parsed && ticketType === "purchase";
+
+  if (subcommand === "ticket") {
+    if (!isPurchaseTicket) throw new Error("Use the ticket setting inside a MatchIntel purchase ticket.");
+    const enabled = interaction.options.getBoolean("enabled", true);
+    await interaction.channel.setTopic(ticketTopic(
+      parsed.userId,
+      parsed.status,
+      parsed.claimedBy,
+      "purchase",
+      enabled
+    ), `Payment reminder setting changed by ${interaction.user.tag}`);
+    if (!enabled) paymentReminderCooldowns.delete(interaction.channel.id);
+    return interaction.editReply(`Payment reminders are now **${enabled ? "enabled" : "disabled"} in this purchase ticket**.${enabled && !globalState.enabled ? " The global setting is still disabled, so reminders will remain silent until it is re-enabled." : ""}`);
+  }
+
+  const fields = [
+    { name: "Global reminders", value: globalState.enabled ? "Enabled" : "Disabled", inline: true }
+  ];
+  if (isPurchaseTicket) {
+    const ticketEnabled = parsed.paymentReminderEnabled;
+    fields.push(
+      { name: "This ticket", value: ticketEnabled ? "Enabled" : "Disabled", inline: true },
+      { name: "Effective status", value: globalState.enabled && ticketEnabled ? "Enabled" : "Disabled", inline: true }
+    );
+  } else {
+    fields.push({ name: "This channel", value: "Not a purchase ticket", inline: true });
+  }
+  return interaction.editReply({ embeds: [new EmbedBuilder()
+    .setColor(globalState.enabled ? COLORS.green : COLORS.yellow)
+    .setTitle("Payment reminder status")
+    .addFields(fields)
+    .setFooter({ text: `Official PayPal: ${config.paypalEmail}` })] });
+}
+
+export async function handlePaymentSafetyMessage(message) {
+  try {
+    if (!message.guild || message.author?.bot || !message.channel || !paymentMessageMatches(message.content)) return false;
+    const parsed = parseTicketTopic(message.channel.topic);
+    if (!parsed || parsed.status !== "open" || ticketTypeForChannel(message.channel, parsed) !== "purchase") return false;
+    if (!parsed.paymentReminderEnabled) return false;
+
+    const { enabled: globalEnabled } = await readGlobalPaymentReminderState(message.guild);
+    if (!globalEnabled) return false;
+
+    const lastReminder = paymentReminderCooldowns.get(message.channel.id) || 0;
+    if (Date.now() - lastReminder < PAYMENT_REMINDER_COOLDOWN_MS) return false;
+    paymentReminderCooldowns.set(message.channel.id, Date.now());
+
+    await message.channel.send({
+      embeds: [new EmbedBuilder()
+        .setColor(COLORS.yellow)
+        .setTitle("Payment safety reminder")
+        .setDescription("Only configured **MatchIntel owners** can accept money. Do **not** send payment to an admin, moderator, support agent, staff member, or anyone else claiming to collect money for MatchIntel.")
+        .addFields(
+          { name: "Official PayPal", value: `\`${config.paypalEmail}\`` },
+          { name: "Stay safe", value: "Confirm that payment instructions came directly from a configured owner before sending money." }
+        )
+        .setFooter({ text: "Owners can control this with /paymentreminder." })],
+      allowedMentions: { parse: [], users: [], roles: [] }
+    });
+    return true;
+  } catch (error) {
+    console.error(`[payment-reminder] Failed in ${message.channel?.id || "unknown"}:`, error.message || error);
+    return false;
   }
 }
 

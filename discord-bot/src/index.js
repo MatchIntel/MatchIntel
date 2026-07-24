@@ -8,6 +8,8 @@ import {
   announceReleaseOnce,
   handleGuildMemberAdd,
   handlePublishUpdate,
+  handlePaymentReminder,
+  handlePaymentSafetyMessage,
   handleSendThisMessage,
   handleSetupTickets,
   handleSetupWelcome,
@@ -22,7 +24,7 @@ const ADMIN_COMMANDS = new Set([
   "deletekey", "reissuekey", "extendkey", "extendallkeys", "maintenance", "setversion", "auditlog",
   "setupwelcome", "testwelcome", "setuptickets"
 ]);
-const OWNER_ONLY_COMMANDS = new Set(["deleteallkeys", "setversion", "sendthismessage", "publishupdate"]);
+const OWNER_ONLY_COMMANDS = new Set(["deleteallkeys", "setversion", "sendthismessage", "publishupdate", "paymentreminder"]);
 
 const rest = new REST({ version: "10" }).setToken(config.token);
 await Promise.all([
@@ -31,7 +33,7 @@ await Promise.all([
 ]);
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages]
 });
 
 function username(user) {
@@ -410,7 +412,7 @@ async function handleHelp(interaction) {
     { name: "Everyone (bot DMs)", value: "`/whatsmykey` privately shows all linked keys. `/whatsmytrialkey` recovers the exact free-trial key issued by the website." },
     { name: "Staff", value: "`/genkey` `/keyinfo` `/finduser` `/listkeys` `/resetdevices` `/devices` `/versionstatus` `/systemstatus`" },
     { name: "Admin", value: "`/reissuekey` `/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog` `/setupwelcome` `/testwelcome` `/setuptickets`" },
-    { name: "Owner only", value: "`/deleteallkeys` `/setversion` `/sendthismessage` `/publishupdate`" },
+    { name: "Owner only", value: "`/deleteallkeys` `/setversion` `/sendthismessage` `/publishupdate` `/paymentreminder`" },
     { name: "Your access", value: accessLevel(interaction) },
     { name: "Deletion safety", value: "Revoking disables a key but keeps its record. Deleting permanently removes it and cannot be undone." }
   ])] });
@@ -441,6 +443,7 @@ const handlers = {
   setupwelcome: handleSetupWelcome,
   testwelcome: handleTestWelcome,
   setuptickets: handleSetupTickets,
+  paymentreminder: handlePaymentReminder,
   sendthismessage: handleSendThisMessage,
   publishupdate: handlePublishUpdate,
   bothelp: handleHelp
@@ -490,8 +493,12 @@ client.on("guildMemberAdd", member => {
   void handleGuildMemberAdd(member);
 });
 
+client.on("messageCreate", message => {
+  void handlePaymentSafetyMessage(message);
+});
+
 client.once("ready", () => {
-  console.log(`MatchIntel bot 0.7.4 logged in as ${client.user.tag}`);
+  console.log(`MatchIntel bot 0.7.5 logged in as ${client.user.tag}`);
   console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
   if (!config.staffRoles.size) console.warn("BOT_STAFF_ROLE_IDS is empty. Only owners/admin-role users can access commands.");
   let releaseTimer = null;

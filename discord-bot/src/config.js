@@ -25,10 +25,11 @@ export const config = {
   adminRoles: ids("BOT_ADMIN_ROLE_IDS"),
   defaultTrialDays: Math.max(1, Math.min(30, Number(process.env.DEFAULT_TRIAL_DAYS || 3))),
   updatesChannelId: text("MATCHINTEL_UPDATES_CHANNEL_ID", "1529448180213874740"),
-  releaseVersion: text("MATCHINTEL_RELEASE_VERSION", "0.7.4"),
-  releaseComponents: text("MATCHINTEL_RELEASE_COMPONENTS", "Discord bot + backend"),
+  paypalEmail: text("MATCHINTEL_PAYPAL_EMAIL", "liamlifeisgood@gmail.com"),
+  releaseVersion: text("MATCHINTEL_RELEASE_VERSION", "0.7.5"),
+  releaseComponents: text("MATCHINTEL_RELEASE_COMPONENTS", "Discord bot"),
   releaseNotes: text(
     "MATCHINTEL_RELEASE_NOTES",
-    "Timed keys now start on first successful app activation, website trial keys can be recovered with /whatsmytrialkey, and ticket types remain supported."
+    "Purchase tickets now show the official PayPal address and include configurable owner-only payment safety reminders."
   )
 };
