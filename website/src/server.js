@@ -48,7 +48,7 @@ app.get("/health", (_req, res) => {
   res.status(200).json({
     status: "ok",
     service: "matchintel-website",
-    version: "0.5.1",
+    version: "0.5.2",
     uptimeSeconds: Math.floor(process.uptime())
   });
 });
@@ -219,7 +219,7 @@ app.use((error, _req, res, _next) => {
 });
 
 app.listen(config.port, "0.0.0.0", () => {
-  console.log(`MatchIntel website 0.5.1 listening on ${config.port}`);
+  console.log(`MatchIntel website 0.5.2 listening on ${config.port}`);
 });
 
 function httpError(status, publicMessage) {
