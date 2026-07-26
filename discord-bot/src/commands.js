@@ -185,7 +185,7 @@ const commandBuilders = [
   new SlashCommandBuilder()
     .setName("sendthismessage")
     .setDescription("Send a message or files as MatchIntel Helper in this channel")
-    .addStringOption(option => option.setName("message").setDescription("Message text").setMaxLength(4000))
+    .addStringOption(option => option.setName("message").setDescription("Message text. Use \\n for line breaks; bold numbered sections format automatically.").setMaxLength(4000))
     .addStringOption(option => option.setName("title").setDescription("Optional embed title").setMaxLength(200))
     .addAttachmentOption(option => option.setName("file_1").setDescription("Optional image or file"))
     .addAttachmentOption(option => option.setName("file_2").setDescription("Optional second image or file"))

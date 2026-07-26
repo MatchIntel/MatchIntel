@@ -10,6 +10,7 @@ import { api } from "./api.js";
 import { canUse, accessLevel } from "./access.js";
 import { config } from "./config.js";
 import { COLORS, discordTime, durationText, licenseExpiryText, licenseStatusText, truncate } from "./format.js";
+import { formatBotMessage } from "./messageFormat.js";
 import {
   PAYMENT_REMINDER_COOLDOWN_MS,
   globalPaymentRemindersEnabled,
@@ -559,7 +560,7 @@ async function collectAttachments(interaction, names) {
 
 export async function handleSendThisMessage(interaction) {
   if (!interaction.channel || typeof interaction.channel.send !== "function") throw new Error("This channel cannot receive bot messages.");
-  const message = interaction.options.getString("message") || "";
+  const message = formatBotMessage(interaction.options.getString("message") || "");
   const title = interaction.options.getString("title") || "";
   const files = await collectAttachments(interaction, ["file_1", "file_2", "file_3"]);
   if (!message && !title && !files.length) throw new Error("Add a message, title, image, or file.");
@@ -571,9 +572,7 @@ export async function handleSendThisMessage(interaction) {
   if (title || message.length > 2000) {
     const builder = new EmbedBuilder()
       .setColor(COLORS.blue)
-      .setTitle(title || "MatchIntel")
-      .setFooter({ text: "MatchIntel Helper" })
-      .setTimestamp();
+      .setTitle(title || "MatchIntel");
     if (message) builder.setDescription(message);
     payload.embeds = [builder];
   } else {
