@@ -17,7 +17,11 @@ import { issueWebsiteTrial } from "./freeTrials.js";
 import { migrationState, startMigrationLoop } from "./migrations.js";
 import * as discordBot from "./discordBot.js";
 
+import {createQuiltedAdminRouter} from "./quiltedAdmin.js";
+import { createQtRouter, createQtService } from "./qtLicenses.js";
+
 const app = express();
+const qtLicensing=createQtService();
 
 // Railway places one reverse proxy in front of the service. Trusting exactly
 // one hop allows express-rate-limit to identify the real client without making
@@ -37,7 +41,7 @@ app.get("/health", async (_req, res) => {
   const missingEnvironment = missingRequiredEnvironment();
   let versionControl = null;
   try {
-    const runtime = await getRuntimeSettings();
+    const runtime = await qtLicensing.settings.get();
     versionControl = {
       source: runtime.version.source,
       minimumVersion: runtime.version.minimumVersion,
@@ -51,9 +55,10 @@ app.get("/health", async (_req, res) => {
   }
   res.status(200).json({
     status: "ok",
-    service: "matchintel-backend",
-    version: "0.7.4",
+    service: "quilted-tweaks-backend",
+    version: "0.8.1",
     uptimeSeconds: Math.floor(process.uptime()),
+    qtLicensing: { protocol: 1, minimumVersion: config.qtMinimumVersion, maintenance: config.qtMaintenance },
     configuration: missingEnvironment.length ? "incomplete" : "ready",
     missingEnvironment,
     database: migrationState.ready ? "ready" : "starting",
@@ -90,7 +95,7 @@ app.get("/ready", async (_req, res) => {
   }
   try {
     await pool.query("SELECT 1");
-    res.json({ status: "ready", database: "ready", version: "0.7.4" });
+    res.json({ status: "ready", database: "ready", version: "0.8.1" });
   } catch (error) {
     res.status(503).json({
       status: "not-ready",
@@ -102,7 +107,7 @@ app.get("/ready", async (_req, res) => {
 
 app.get("/v1/public/config", async (_req, res, next) => {
   try {
-    const runtime = await getRuntimeSettings();
+    const runtime = await qtLicensing.settings.get();
     res.json({
       latestVersion: runtime.version.latestVersion,
       minimumVersion: runtime.version.minimumVersion,
@@ -133,7 +138,7 @@ app.use("/v1", (_req, res, next) => {
   res.setHeader("Retry-After", "30");
   return res.status(503).json({
     code: "MI-CONFIG-INCOMPLETE",
-    message: "The MatchIntel backend is missing required Railway variables.",
+    message: "The Quilted Tweaks backend is missing required Railway variables.",
     missingEnvironment
   });
 });
@@ -143,10 +148,12 @@ app.use("/v1", (_req, res, next) => {
   res.setHeader("Retry-After", "5");
   return res.status(503).json({
     code: "MI-DATABASE-STARTING",
-    message: "MatchIntel is finishing its database startup. Try again in a few seconds."
+    message: "Quilted Tweaks is finishing its database startup. Try again in a few seconds."
   });
 });
 
+app.use("/v1/qt-admin", createQuiltedAdminRouter({service:qtLicensing}));
+app.use("/v1/qt", createQtRouter(qtLicensing));
 app.post("/v1/licenses/activate", activate);
 app.post("/v1/internal/free-trials", requireWebsite, issueWebsiteTrial);
 app.post("/v1/auth/refresh", refresh);
@@ -200,15 +207,15 @@ app.use((error, _req, res, _next) => {
 const server = http.createServer(app);
 app.locals.broadcast = attach(server);
 server.listen(config.port, "0.0.0.0", () => {
-  console.log(`MatchIntel backend 0.7.4 listening on 0.0.0.0:${config.port}`);
+  console.log(`Quilted Tweaks backend 0.8.1 listening on 0.0.0.0:${config.port}`);
   const missingEnvironment = missingRequiredEnvironment();
   if (missingEnvironment.length) {
     console.error(`[configuration] Missing required Railway variable(s): ${missingEnvironment.join(", ")}`);
     console.error("[configuration] /health remains online; API routes are disabled until the variables are added.");
     return;
   }
-  void startMigrationLoop().then(() => startEnrichmentWorker()).catch(error => {
-    console.error(`[startup] Enrichment worker failed to start: ${error.message}`);
+  void startMigrationLoop().catch(error => {
+    console.error(`[startup] Database startup failed: ${error.message}`);
   });
 });
 

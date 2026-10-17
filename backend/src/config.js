@@ -23,11 +23,13 @@ const requiredNames = [
   "DATABASE_URL",
   "JWT_SECRET",
   "ADMIN_API_KEY",
-  "WEBSITE_API_KEY",
   "DEVICE_HASH_PEPPER"
 ];
 
 export const config = {
+  qtMinimumVersion: text("QUILTED_MINIMUM_APP_VERSION", text("QT_MINIMUM_APP_VERSION", "2.6.1")),
+  qtMaintenance: boolean("QUILTED_MAINTENANCE_MODE", boolean("QT_MAINTENANCE_MODE", false)),
+  qtAccessTokenMinutes: number("QT_ACCESS_TOKEN_MINUTES", 15, { min: 5, max: 60 }),
   nodeEnv: text("NODE_ENV", "development"),
   port: number("PORT", 8080, { min: 1, max: 65535 }),
   databaseUrl: text("DATABASE_URL"),

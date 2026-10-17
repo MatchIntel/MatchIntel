@@ -1,58 +1,10 @@
-import { pool } from "../src/db.js";
-import { createLicenseKey, encryptLicenseKey, parseDuration, randomUuid, sha256 } from "../src/security.js";
-
-const opts = {};
-for (let index = 0; index < process.argv.length; index += 1) {
-  if (!process.argv[index].startsWith("--")) continue;
-  const key = process.argv[index].slice(2);
-  opts[key] = process.argv[index + 1] && !process.argv[index + 1].startsWith("--")
-    ? process.argv[++index]
-    : "true";
-}
-
-const duration = opts.duration || "30d";
-const durationTarget = parseDuration(duration);
-const plan = durationTarget ? "trial" : "lifetime";
-const activationDurationSeconds = durationTarget
-  ? Math.max(1, Math.ceil((durationTarget.getTime() - Date.now()) / 1000))
-  : null;
-const maxDevices = Math.max(1, Number(opts.devices || 1));
-const licenseKey = createLicenseKey();
-const id = randomUuid();
-const features = String(opts.features || "live_lobby,enrichment,history,reports")
-  .split(",")
-  .map(value => value.trim())
-  .filter(Boolean);
-
-try {
-  await pool.query(
-    `INSERT INTO licenses(
-      id,key_hash,key_prefix,key_ciphertext,plan,expires_at,activation_duration_seconds,
-      activated_at,max_devices,features,note
-    ) VALUES($1,$2,$3,$4,$5,NULL,$6,NULL,$7,$8,$9)`,
-    [
-      id,
-      sha256(licenseKey),
-      licenseKey.slice(0, 12),
-      encryptLicenseKey(licenseKey),
-      plan,
-      activationDurationSeconds,
-      maxDevices,
-      JSON.stringify(features),
-      opts.note || ""
-    ]
-  );
-  console.log(JSON.stringify({
-    licenseKey,
-    id,
-    plan,
-    duration,
-    pendingActivation: plan === "trial",
-    activationDurationSeconds,
-    expiresAt: null,
-    maxDevices,
-    features
-  }, null, 2));
-} finally {
-  await pool.end();
-}
+import {pool} from '../src/db.js';
+import {createQtService} from '../src/qtLicenses.js';
+const opts={};for(let i=2;i<process.argv.length;i++){if(process.argv[i].startsWith('--')){const name=process.argv[i].slice(2);opts[name]=process.argv[i+1]&&!process.argv[i+1].startsWith('--')?process.argv[++i]:'true';}}
+try{
+ if(!/^\d{15,25}$/.test(opts.user||''))throw new Error('Pass --user DISCORD_USER_ID. Example: npm run key:create -- --user 123456789012345678 --duration lifetime');
+ const duration=opts.duration||'30d';if(duration!=='lifetime'&&!/^(?:[1-9]|[12]\d|30)d$/.test(duration))throw new Error('Use --duration lifetime or 1d through 30d. Timers start on activation.');
+ if(opts.devices&&opts.devices!=='1')throw new Error('Quilted Tweaks keys bind to one PC.');
+ const answer=await createQtService().generate({discordUserId:opts.user,discordUsername:opts.username||opts.user,plan:duration==='lifetime'?'lifetime':'trial',trialDays:duration==='lifetime'?null:Number(duration.slice(0,-1)),note:opts.note||''},opts.actor||opts.user);
+ console.log(JSON.stringify(answer,null,2));
+}catch(e){console.error(e.message);process.exitCode=1;}finally{await pool.end();}
