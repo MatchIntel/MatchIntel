@@ -1,5 +1,12 @@
 import { config } from "./config.js";
 
+export function routeApiPath(path){
+  // Keep existing guild/ticket storage so live ticket buttons and settings survive.
+  if(path.startsWith("/v1/admin/discord/"))return path;
+  if(path==="/v1/admin"||path.startsWith("/v1/admin/"))return "/v1/qt-admin"+path.slice("/v1/admin".length);
+  return path;
+}
+
 export async function api(path, options = {}) {
   const {
     actor = "discord-bot",
@@ -8,7 +15,7 @@ export async function api(path, options = {}) {
     ...fetchOptions
   } = options;
 
-  const response = await fetch(`${config.backendUrl}${path}`, {
+  const response = await fetch(`${config.backendUrl}${routeApiPath(path)}`, {
     ...fetchOptions,
     signal: AbortSignal.timeout(timeoutMs),
     headers: {
@@ -26,8 +33,9 @@ export async function api(path, options = {}) {
     catch { body = { message: text.slice(0, 500) }; }
   }
   if (!response.ok) {
-    const error = new Error(body.message || `Backend returned HTTP ${response.status}`);
-    error.code = body.code;
+    const missingQuiltedRoutes=response.status===404&&!body.code&&routeApiPath(path).startsWith("/v1/qt-admin/");
+    const error = new Error(missingQuiltedRoutes?"Deploy Quilted Tweaks backend 0.8.1 first; its licensing routes are not available yet.":body.message || `Backend returned HTTP ${response.status}`);
+    error.code = missingQuiltedRoutes?"QT-BACKEND-UPDATE":body.code;
     error.status = response.status;
     throw error;
   }

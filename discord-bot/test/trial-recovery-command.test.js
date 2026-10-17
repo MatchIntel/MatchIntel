@@ -8,7 +8,7 @@ const communitySource = await fs.readFile(new URL("../src/community.js", import.
 
 test("website trial recovery command is globally registered", () => {
   assert.match(commandsSource, /setName\("whatsmytrialkey"\)/);
-  assert.match(commandsSource, /exact free-trial key issued .* website/i);
+  assert.match(commandsSource, /latest timed Quilted Tweaks key linked to your account/i);
 });
 
 test("website trial recovery command is routed before staff permissions", () => {
@@ -21,5 +21,5 @@ test("website trial recovery command is routed before staff permissions", () => 
 
 test("trial recovery uses the dedicated website-trial backend endpoint", () => {
   assert.match(communitySource, /website-trial\/reveal/);
-  assert.match(communitySource, /same trial key issued by the MatchIntel website/i);
+  assert.match(communitySource, /your Quilted Tweaks timed key/i);
 });

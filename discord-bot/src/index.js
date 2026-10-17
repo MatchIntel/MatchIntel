@@ -81,14 +81,14 @@ async function handleGenKey(interaction) {
     });
     customerFields.push({
       name: "When the timer starts",
-      value: "Only after the key is successfully activated in the MatchIntel app for the first time."
+      value: "Only after the key is successfully activated in the Quilted Tweaks app for the first time."
     });
   }
-  const customerEmbed = embed("Your MatchIntel license", customerFields, COLORS.purple);
+  const customerEmbed = embed("Your Quilted Tweaks license", customerFields, COLORS.purple);
   let delivery = "Sent by DM.";
   try { await target.send({ embeds: [customerEmbed] }); }
   catch { delivery = "DM failed. Copy the key below and send it securely."; }
-  return interaction.editReply({ embeds: [embed("MatchIntel key generated", [
+  return interaction.editReply({ embeds: [embed("Quilted Tweaks key generated", [
     { name: "Customer", value: `${target} (\`${target.id}\`)` },
     { name: "Key", value: `\`${result.licenseKey}\`` },
     { name: "License ID", value: `\`${result.license.id}\`` },
@@ -114,7 +114,7 @@ async function handleKeyInfo(interaction) {
 
   if (result.licenses.length === 1) {
     return interaction.editReply({ embeds: [embed(
-      result.matchType === "device" ? "MatchIntel key found by Device ID" : "MatchIntel key information",
+      result.matchType === "device" ? "Quilted Tweaks key found by Device ID" : "Quilted Tweaks key information",
       licenseFields(result.licenses[0], { showRecoveryNote: true }),
       COLORS.blue
     )] });
@@ -144,7 +144,7 @@ async function handleReissueKey(interaction) {
     actor: interaction.user.id,
     body: JSON.stringify({ reference, confirmation })
   });
-  return interaction.editReply({ embeds: [embed("MatchIntel key reissued", [
+  return interaction.editReply({ embeds: [embed("Quilted Tweaks key reissued", [
     ...licenseFields(result.license),
     { name: "Important", value: "The old key no longer activates new devices. Existing device bindings were kept." }
   ], COLORS.green)] });
@@ -169,7 +169,7 @@ async function handleListKeys(interaction) {
   if (plan) params.set("plan", plan);
   const result = await api(`/v1/admin/licenses?${params}`, { actor: interaction.user.id });
   const lines = result.licenses.map(license => `${licenseLabel(license)}${license.discordUserId ? ` • <@${license.discordUserId}>` : " • Unlinked"}`);
-  return interaction.editReply({ embeds: [embed("Recent MatchIntel keys", [
+  return interaction.editReply({ embeds: [embed("Recent Quilted Tweaks keys", [
     { name: `Results (${result.licenses.length})`, value: truncate(lines.join("\n") || "No licenses found.", 4000) }
   ])] });
 }
@@ -185,7 +185,7 @@ async function handleResetDevices(interaction) {
       { name: "Licenses affected", value: String(result.licensesAffected), inline: true },
       { name: "Devices removed", value: String(result.devicesRemoved), inline: true },
       { name: "Sessions revoked", value: String(result.refreshTokensRevoked), inline: true },
-      { name: "Result", value: "The customer can activate MatchIntel again immediately." }
+      { name: "Result", value: "The customer can activate Quilted Tweaks again immediately." }
     ], COLORS.green)] });
   }
   const ref = interaction.options.getString("license", true);
@@ -268,7 +268,7 @@ async function handleDeleteKey(interaction) {
   }
   const ref = interaction.options.getString("license", true);
   const result = await api(`/v1/admin/licenses/${encodeURIComponent(ref)}`, {
-    method: "DELETE", actor: interaction.user.id
+    method: "DELETE", actor: interaction.user.id, body: JSON.stringify({ confirmation: "DELETE KEY" })
   });
   return interaction.editReply({ embeds: [embed("Key permanently deleted", [
     { name: "License ID", value: `\`${result.deleted.id}\`` },
@@ -353,20 +353,20 @@ async function handleSetVersion(interaction) {
     body: JSON.stringify({ minimumVersion, latestVersion, forceUpdate, updateUrl, message })
   });
   const version = result.version;
-  return interaction.editReply({ embeds: [embed("MatchIntel version control updated", [
+  return interaction.editReply({ embeds: [embed("Quilted Tweaks version control updated", [
     { name: "Minimum allowed", value: `\`${version.minimumVersion}\``, inline: true },
     { name: "Latest available", value: `\`${version.latestVersion}\``, inline: true },
     { name: "Force update", value: version.forceUpdate ? "Enabled" : "Disabled", inline: true },
     { name: "Update URL", value: version.updateUrl || "Not configured" },
     { name: "User message", value: version.message },
-    { name: "Important", value: "Clients with the 0.3.9+ force-update controller will immediately block when below the minimum version." }
+    { name: "Important", value: "Quilted Tweaks activation and periodic license checks enforce these version settings." }
   ], version.forceUpdate ? COLORS.red : COLORS.green)] });
 }
 
 async function handleVersionStatus(interaction) {
   const result = await api("/v1/admin/version", { actor: interaction.user.id });
   const version = result.version;
-  return interaction.editReply({ embeds: [embed("MatchIntel version control", [
+  return interaction.editReply({ embeds: [embed("Quilted Tweaks version control", [
     { name: "Minimum allowed", value: `\`${version.minimumVersion}\``, inline: true },
     { name: "Latest available", value: `\`${version.latestVersion}\``, inline: true },
     { name: "Force update", value: version.forceUpdate ? "Enabled" : "Disabled", inline: true },
@@ -378,7 +378,7 @@ async function handleVersionStatus(interaction) {
 
 async function handleSystemStatus(interaction) {
   const result = await api("/v1/admin/status", { actor: interaction.user.id });
-  return interaction.editReply({ embeds: [embed("MatchIntel system status", [
+  return interaction.editReply({ embeds: [embed("Quilted Tweaks system status", [
     { name: "Backend", value: result.status, inline: true },
     { name: "Latest version", value: result.version, inline: true },
     { name: "Minimum version", value: result.minimumVersion, inline: true },
@@ -403,14 +403,14 @@ async function handleAuditLog(interaction) {
   const lines = result.entries.map(entry =>
     `**${entry.action}** • ${discordTime(entry.created_at)}\nActor: \`${entry.actor || "unknown"}\` • Target: \`${entry.target || "none"}\``
   );
-  return interaction.editReply({ embeds: [embed("Recent MatchIntel audit log", [
+  return interaction.editReply({ embeds: [embed("Recent Quilted Tweaks audit log", [
     { name: `Entries (${result.entries.length})`, value: truncate(lines.join("\n\n") || "No entries found.", 4000) }
   ], COLORS.yellow)] });
 }
 
 async function handleHelp(interaction) {
   return interaction.editReply({ embeds: [embed("Quilted Tweaks Helper commands", [
-    { name: "Everyone (bot DMs)", value: "`/whatsmykey` privately shows all linked keys. `/whatsmytrialkey` recovers the exact free-trial key issued by the website." },
+    { name: "Everyone (bot DMs)", value: "`/whatsmykey` privately shows all linked keys. `/whatsmytrialkey` recovers the exact latest timed key linked to your account." },
     { name: "Staff", value: "`/genkey` `/keyinfo` `/finduser` `/listkeys` `/resetdevices` `/devices` `/versionstatus` `/systemstatus`" },
     { name: "Admin", value: "`/reissuekey` `/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog` `/setupwelcome` `/testwelcome` `/setuptickets`" },
     { name: "Owner only", value: "`/deleteallkeys` `/setversion` `/sendthismessage` `/publishupdate` `/paymentreminder`" },
@@ -502,7 +502,7 @@ client.on("messageCreate", message => {
 });
 
 client.once("ready", async () => {
-  console.log(`Quilted Tweaks Helper 0.7.7 logged in as ${client.user.tag}`);
+  console.log(`Quilted Tweaks Helper 0.8.1 logged in as ${client.user.tag}`);
   console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
   client.user.setPresence({ activities: [{ name: "Quilted Tweaks Support" }], status: "online" });
   try {

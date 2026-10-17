@@ -26,11 +26,11 @@ const extensionScopes = [
 const commandBuilders = [
   new SlashCommandBuilder()
     .setName("genkey")
-    .setDescription("Generate a Discord-linked MatchIntel key")
+    .setDescription("Generate a Discord-linked Quilted Tweaks key")
     .addUserOption(option => option.setName("user").setDescription("Discord account that will own the key").setRequired(true))
     .addStringOption(option => option.setName("plan").setDescription("License plan").setRequired(true).addChoices(...planChoices))
     .addIntegerOption(option => option.setName("trial_days").setDescription("Trial length; ignored for lifetime").addChoices(...trialChoices))
-    .addIntegerOption(option => option.setName("devices").setDescription("Maximum devices").setMinValue(1).setMaxValue(25))
+    .addIntegerOption(option => option.setName("devices").setDescription("One PC per key").setMinValue(1).setMaxValue(1))
     .addStringOption(option => option.setName("note").setDescription("Private staff note").setMaxLength(500)),
 
   new SlashCommandBuilder()
@@ -51,7 +51,7 @@ const commandBuilders = [
 
   new SlashCommandBuilder()
     .setName("listkeys")
-    .setDescription("List recent MatchIntel keys")
+    .setDescription("List recent Quilted Tweaks keys")
     .addStringOption(option => option.setName("status").setDescription("Filter by status").addChoices(
       { name: "Active", value: "active" }, { name: "Revoked", value: "revoked" }
     ))
@@ -71,7 +71,7 @@ const commandBuilders = [
 
   new SlashCommandBuilder()
     .setName("revokekey")
-    .setDescription("Revoke one MatchIntel key")
+    .setDescription("Revoke one Quilted Tweaks key")
     .addStringOption(option => option.setName("license").setDescription("License UUID, full key, or prefix").setRequired(true))
     .addStringOption(option => option.setName("reason").setDescription("Reason for revocation").setRequired(true).setMaxLength(300)),
 
@@ -99,7 +99,7 @@ const commandBuilders = [
 
   new SlashCommandBuilder()
     .setName("deletekey")
-    .setDescription("Permanently delete one MatchIntel key")
+    .setDescription("Permanently delete one Quilted Tweaks key")
     .addStringOption(option => option.setName("license").setDescription("License UUID, full key, or prefix").setRequired(true))
     .addStringOption(option => option.setName("confirmation").setDescription("Type DELETE KEY exactly").setRequired(true)),
 
@@ -123,20 +123,20 @@ const commandBuilders = [
 
   new SlashCommandBuilder()
     .setName("maintenance")
-    .setDescription("Set MatchIntel maintenance state")
+    .setDescription("Set Quilted Tweaks maintenance state")
     .addBooleanOption(option => option.setName("enabled").setDescription("Enable or disable maintenance").setRequired(true))
     .addStringOption(option => option.setName("message").setDescription("Maintenance message").setMaxLength(500)),
 
   new SlashCommandBuilder()
     .setName("setversion")
-    .setDescription("Set MatchIntel minimum/latest versions and force-update state")
+    .setDescription("Set Quilted Tweaks minimum/latest versions and force-update state")
     .addStringOption(option => option.setName("minimum").setDescription("Minimum allowed version, such as 0.3.9").setRequired(true))
     .addBooleanOption(option => option.setName("force_update").setDescription("Block clients below minimum").setRequired(true))
     .addStringOption(option => option.setName("latest").setDescription("Newest available version; defaults to minimum"))
     .addStringOption(option => option.setName("update_url").setDescription("Page or download URL shown to outdated users").setMaxLength(1000))
     .addStringOption(option => option.setName("message").setDescription("Message shown to outdated users").setMaxLength(500)),
 
-  new SlashCommandBuilder().setName("versionstatus").setDescription("Show current MatchIntel version-control settings"),
+  new SlashCommandBuilder().setName("versionstatus").setDescription("Show current Quilted Tweaks version-control settings"),
   new SlashCommandBuilder().setName("systemstatus").setDescription("Show backend, license, device, session, and version totals"),
 
   new SlashCommandBuilder()
@@ -194,7 +194,7 @@ const commandBuilders = [
 
   new SlashCommandBuilder()
     .setName("publishupdate")
-    .setDescription("Publish a MatchIntel client, backend, bot, or website update")
+    .setDescription("Publish a Quilted Tweaks client, backend, bot, or website update")
     .addStringOption(option => option.setName("component").setDescription("What changed").setRequired(true).addChoices(
       { name: "Client", value: "Client" },
       { name: "Backend", value: "Backend" },
@@ -205,7 +205,7 @@ const commandBuilders = [
     .addStringOption(option => option.setName("version").setDescription("Version label, such as 0.7.5").setRequired(true).setMaxLength(50))
     .addStringOption(option => option.setName("summary").setDescription("Full update notes").setRequired(true).setMaxLength(4000))
     .addAttachmentOption(option => option.setName("file").setDescription("Optional release file or image"))
-    .addChannelOption(option => option.setName("channel").setDescription("Defaults to the configured MatchIntel updates channel").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
+    .addChannelOption(option => option.setName("channel").setDescription("Defaults to the configured Quilted Tweaks updates channel").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
 ]
 
 export const commands = commandBuilders.map(command => command.toJSON());
@@ -213,12 +213,12 @@ export const commands = commandBuilders.map(command => command.toJSON());
 export const publicCommands = [
   new SlashCommandBuilder()
     .setName("whatsmykey")
-    .setDescription("Privately show every MatchIntel key linked to your Discord account")
+    .setDescription("Privately show every Quilted Tweaks key linked to your Discord account")
     .setDMPermission(true)
     .toJSON(),
   new SlashCommandBuilder()
     .setName("whatsmytrialkey")
-    .setDescription("Recover the exact free-trial key issued to you by the MatchIntel website")
+    .setDescription("Recover the latest timed Quilted Tweaks key linked to your account")
     .setDMPermission(true)
     .toJSON()
 ];

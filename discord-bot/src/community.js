@@ -709,10 +709,10 @@ export async function handlePublishUpdate(interaction) {
   const sent = await channel.send({
     embeds: [new EmbedBuilder()
       .setColor(COLORS.blue)
-      .setTitle(`MatchIntel ${component} update — v${version}`)
+      .setTitle(`Quilted Tweaks ${component} update — v${version}`)
       .setDescription(summary)
       .addFields({ name: "Published by", value: `<@${interaction.user.id}>` })
-      .setFooter({ text: `MatchIntel release • ${component} • ${version}` })
+      .setFooter({ text: `Quilted Tweaks release • ${component} • ${version}` })
       .setTimestamp()],
     files,
     allowedMentions: { parse: [] }
@@ -733,7 +733,7 @@ export async function handleWhatsMyKey(interaction) {
   });
   const licenses = Array.isArray(result.licenses) ? result.licenses : [];
   if (!licenses.length) {
-    return interaction.editReply("No MatchIntel key is linked to this Discord account. Open a support ticket if you believe this is incorrect.");
+    return interaction.editReply("No Quilted Tweaks key is linked to this Discord account. Open a support ticket if you believe this is incorrect.");
   }
   const ordered = [...licenses].sort((a, b) => Number(Boolean(b.isUsable)) - Number(Boolean(a.isUsable)));
   const embeds = ordered.slice(0, 10).map((license, index) => {
@@ -754,11 +754,11 @@ export async function handleWhatsMyKey(interaction) {
     }
     const builder = new EmbedBuilder()
       .setColor(license.isUsable ? COLORS.green : COLORS.yellow)
-      .setTitle(`${license.plan === "lifetime" ? "Lifetime" : "Trial"} MatchIntel key`)
+      .setTitle(`${license.plan === "lifetime" ? "Lifetime" : "Trial"} Quilted Tweaks key`)
       .setDescription(description)
       .addFields(...fields);
     if (license.activatedAt) builder.addFields({ name: "First activated", value: discordTime(license.activatedAt), inline: true });
-    if (index === 0) builder.setAuthor({ name: "PRIVATE — do not share your MatchIntel key with anyone" });
+    if (index === 0) builder.setAuthor({ name: "PRIVATE — do not share your Quilted Tweaks key with anyone" });
     return builder;
   });
   await interaction.editReply({
@@ -783,20 +783,20 @@ export async function handleWhatsMyTrialKey(interaction) {
 
   if (!result.claimed) {
     return interaction.editReply(
-      "This Discord account has not claimed a MatchIntel website free trial. Claim it on the MatchIntel website first, then use `/whatsmytrialkey` here whenever you need to see the same key again."
+      "No Quilted Tweaks timed key is linked to your Discord account. Ask staff for help if you purchased timed access."
     );
   }
 
   const trial = result.trial;
   if (!trial) {
     return interaction.editReply(
-      "Your Discord account has a recorded website trial claim, but its license record is no longer recoverable. Please open a support ticket so staff can review it."
+      "Your Discord account has a recorded timed key, but its license record is no longer recoverable. Please open a support ticket so staff can review it."
     );
   }
 
   if (!trial.fullKey) {
     return interaction.editReply(
-      "Your website trial was found, but the complete key cannot be decrypted. Please open a support ticket so staff can securely reissue it."
+      "Your timed key was found, but the complete key cannot be decrypted. Please open a support ticket so staff can securely reissue it."
     );
   }
 
@@ -809,11 +809,11 @@ export async function handleWhatsMyTrialKey(interaction) {
 
   const trialEmbed = new EmbedBuilder()
     .setColor(trial.isUsable ? COLORS.green : COLORS.yellow)
-    .setAuthor({ name: "PRIVATE — this is the same trial key issued by the MatchIntel website" })
-    .setTitle("Your MatchIntel website free-trial key")
+    .setAuthor({ name: "PRIVATE — your Quilted Tweaks timed key" })
+    .setTitle("Your Quilted Tweaks timed key")
     .setDescription(`\`\`\`text\n${trial.fullKey}\n\`\`\``)
     .addFields(...fields)
-    .setFooter({ text: "The trial countdown starts only after the key is successfully activated in the MatchIntel app." });
+    .setFooter({ text: "The trial countdown starts only after the key is successfully activated in the Quilted Tweaks app." });
 
   await interaction.editReply({
     content: "⚠️ **Keep this DM private. Do not share this key or show it on stream.**",
@@ -844,10 +844,10 @@ export async function announceReleaseOnce(client) {
     await channel.send({
       embeds: [new EmbedBuilder()
         .setColor(COLORS.blue)
-        .setTitle(`MatchIntel update — v${config.releaseVersion}`)
+        .setTitle(`Quilted Tweaks update — v${config.releaseVersion}`)
         .setDescription(config.releaseNotes)
         .addFields({ name: "Components", value: config.releaseComponents })
-        .setFooter({ text: `MatchIntel automatic release announcement • ${config.releaseVersion}` })
+        .setFooter({ text: `Quilted Tweaks automatic release announcement • ${config.releaseVersion}` })
         .setTimestamp()],
       allowedMentions: { parse: [] }
     });
