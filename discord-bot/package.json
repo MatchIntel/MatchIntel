@@ -1,6 +1,6 @@
 {
-  "name": "matchintel-discord-bot",
-  "version": "0.7.6",
+  "name": "quilted-tweaks-discord-bot",
+  "version": "0.7.7",
   "private": true,
   "type": "module",
   "engines": {

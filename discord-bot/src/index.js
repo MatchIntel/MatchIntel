@@ -9,6 +9,7 @@ import {
   handleGuildMemberAdd,
   handlePublishUpdate,
   handlePaymentReminder,
+  handlePaymentMethodCommand,
   handlePaymentSafetyMessage,
   handleSendThisMessage,
   handleSetupTickets,
@@ -408,7 +409,7 @@ async function handleAuditLog(interaction) {
 }
 
 async function handleHelp(interaction) {
-  return interaction.editReply({ embeds: [embed("MatchIntel bot commands", [
+  return interaction.editReply({ embeds: [embed("Quilted Tweaks Helper commands", [
     { name: "Everyone (bot DMs)", value: "`/whatsmykey` privately shows all linked keys. `/whatsmytrialkey` recovers the exact free-trial key issued by the website." },
     { name: "Staff", value: "`/genkey` `/keyinfo` `/finduser` `/listkeys` `/resetdevices` `/devices` `/versionstatus` `/systemstatus`" },
     { name: "Admin", value: "`/reissuekey` `/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog` `/setupwelcome` `/testwelcome` `/setuptickets`" },
@@ -467,13 +468,13 @@ client.on("interactionCreate", async interaction => {
     }
 
     if (!canUse(interaction, "staff")) {
-      return deny(interaction, "You need the configured MatchIntel staff role to use this bot command.");
+      return deny(interaction, "You need the configured Quilted Tweaks staff role to use this bot command.");
     }
     if (ADMIN_COMMANDS.has(interaction.commandName) && !canUse(interaction, "admin")) {
-      return deny(interaction, "This command requires the configured MatchIntel admin role.");
+      return deny(interaction, "This command requires the configured Quilted Tweaks admin role.");
     }
     if (OWNER_ONLY_COMMANDS.has(interaction.commandName) && accessLevel(interaction) !== "owner") {
-      return deny(interaction, "This command is restricted to configured MatchIntel owner IDs.");
+      return deny(interaction, "This command is restricted to configured Quilted Tweaks owner IDs.");
     }
 
     await interaction.deferReply({ ephemeral: true });
@@ -494,12 +495,25 @@ client.on("guildMemberAdd", member => {
 });
 
 client.on("messageCreate", message => {
-  void handlePaymentSafetyMessage(message);
+  void (async () => {
+    if (await handlePaymentMethodCommand(message)) return;
+    await handlePaymentSafetyMessage(message);
+  })();
 });
 
-client.once("ready", () => {
-  console.log(`MatchIntel bot 0.7.5 logged in as ${client.user.tag}`);
+client.once("ready", async () => {
+  console.log(`Quilted Tweaks Helper 0.7.7 logged in as ${client.user.tag}`);
   console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
+  client.user.setPresence({ activities: [{ name: "Quilted Tweaks Support" }], status: "online" });
+  try {
+    const guild = client.guilds.cache.get(config.guildId) || await client.guilds.fetch(config.guildId);
+    const me = guild.members.me || await guild.members.fetchMe();
+    if (me && me.displayName !== config.botDisplayName) {
+      await me.setNickname(config.botDisplayName, "Quilted Tweaks support branding");
+    }
+  } catch (error) {
+    console.warn(`[branding] Could not set server nickname to ${config.botDisplayName}:`, error.message || error);
+  }
   if (!config.staffRoles.size) console.warn("BOT_STAFF_ROLE_IDS is empty. Only owners/admin-role users can access commands.");
   let releaseTimer = null;
   const attemptReleaseAnnouncement = async () => {

@@ -35,7 +35,7 @@ export function paymentMessageMatches(content) {
     /\bpaid\b/i,
     /\bsend(?:ing)?\s+(?:you|him|her|them|someone|the owner|an admin|staff|money|funds|cash)\b/i,
     /\b(?:send|transfer|wire)\s+(?:the\s+)?(?:money|funds|payment|cash)\b/i,
-    /\b(?:cash\s*app|venmo|zelle|bank transfer|wire transfer|crypto|bitcoin|btc|ethereum|eth)\b/i,
+    /\b(?:cash\s*app|venmo|apple\s*pay|zelle|bank transfer|wire transfer|crypto|bitcoin|btc|ethereum|eth)\b/i,
     /\b(?:credit|debit)\s*card\b/i,
     /\b(?:money|funds|cash)\b/i,
     /(?:[$€£]\s*\d|\b\d+(?:\.\d{1,2})?\s*(?:usd|eur|gbp|dollars?|euros?|pounds?)\b)/i,

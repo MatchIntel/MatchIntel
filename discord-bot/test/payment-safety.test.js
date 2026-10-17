@@ -36,6 +36,7 @@ test("payment language is detected without matching unrelated text", () => {
     "I already paid",
     "Can you send a payment link?",
     "Do you accept Cash App or Venmo?",
+    "Do you take Apple Pay?",
     "Can I use a credit card?",
     "I will transfer the money now",
     "Is it $20?"

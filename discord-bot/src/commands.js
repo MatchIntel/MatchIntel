@@ -145,10 +145,10 @@ const commandBuilders = [
     .addStringOption(option => option.setName("action").setDescription("Optional action filter"))
     .addIntegerOption(option => option.setName("limit").setDescription("Entries to show").setMinValue(1).setMaxValue(20)),
 
-  new SlashCommandBuilder().setName("bothelp").setDescription("Show the MatchIntel bot command list")
+  new SlashCommandBuilder().setName("bothelp").setDescription("Show the Quilted Tweaks Helper command list")
   ,new SlashCommandBuilder()
     .setName("setupwelcome")
-    .setDescription("Configure the MatchIntel welcome message and automatic member role")
+    .setDescription("Configure the Quilted Tweaks welcome message and automatic member role")
     .addChannelOption(option => option.setName("channel").setDescription("Channel that receives welcome messages").setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
     .addRoleOption(option => option.setName("role").setDescription("Role automatically added to new members").setRequired(true))
     .addStringOption(option => option.setName("title").setDescription("Welcome embed title").setMaxLength(200))
@@ -160,7 +160,7 @@ const commandBuilders = [
 
   new SlashCommandBuilder()
     .setName("setuptickets")
-    .setDescription("Post the MatchIntel ticket-type panel in this channel")
+    .setDescription("Post the Quilted Tweaks ticket-type panel in this channel")
     .addChannelOption(option => option.setName("category").setDescription("Category where private tickets are created").addChannelTypes(ChannelType.GuildCategory))
     .addRoleOption(option => option.setName("support_role").setDescription("Support or staff role that can view tickets"))
     .addRoleOption(option => option.setName("mod_role").setDescription("Moderator role that can view tickets"))
@@ -184,7 +184,7 @@ const commandBuilders = [
 
   new SlashCommandBuilder()
     .setName("sendthismessage")
-    .setDescription("Send a message or files as MatchIntel Helper in this channel")
+    .setDescription("Send a message or files as Quilted Tweaks Helper in this channel")
     .addStringOption(option => option.setName("message").setDescription("Message text. Use \\n for line breaks; bold numbered sections format automatically.").setMaxLength(4000))
     .addStringOption(option => option.setName("title").setDescription("Optional embed title").setMaxLength(200))
     .addAttachmentOption(option => option.setName("file_1").setDescription("Optional image or file"))
