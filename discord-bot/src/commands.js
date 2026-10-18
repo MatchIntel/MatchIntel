@@ -136,6 +136,14 @@ const commandBuilders = [
     .addStringOption(option => option.setName("update_url").setDescription("Page or download URL shown to outdated users").setMaxLength(1000))
     .addStringOption(option => option.setName("message").setDescription("Message shown to outdated users").setMaxLength(500)),
 
+  new SlashCommandBuilder()
+    .setName("forceupdate")
+    .setDescription("Owner: require an app update or release the requirement")
+    .addBooleanOption(option => option.setName("enabled").setDescription("Require the version below; false releases the force-update requirement").setRequired(true))
+    .addStringOption(option => option.setName("version").setDescription("Required release, e.g. 2.8.1 (needed when enabling)").setMaxLength(50))
+    .addStringOption(option => option.setName("update_url").setDescription("Public HTTPS download page (needed when enabling)").setMaxLength(1000))
+    .addStringOption(option => option.setName("message").setDescription("Message on the app's update screen").setMaxLength(300)),
+
   new SlashCommandBuilder().setName("versionstatus").setDescription("Show current Quilted Tweaks version-control settings"),
   new SlashCommandBuilder().setName("systemstatus").setDescription("Show backend, license, device, session, and version totals"),
 

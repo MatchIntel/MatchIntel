@@ -25,7 +25,7 @@ const ADMIN_COMMANDS = new Set([
   "deletekey", "reissuekey", "extendkey", "extendallkeys", "maintenance", "setversion", "auditlog",
   "setupwelcome", "testwelcome", "setuptickets"
 ]);
-const OWNER_ONLY_COMMANDS = new Set(["deleteallkeys", "setversion", "sendthismessage", "publishupdate", "paymentreminder"]);
+const OWNER_ONLY_COMMANDS = new Set(["deleteallkeys", "setversion", "forceupdate", "sendthismessage", "publishupdate", "paymentreminder"]);
 
 const rest = new REST({ version: "10" }).setToken(config.token);
 await Promise.all([
@@ -363,6 +363,24 @@ async function handleSetVersion(interaction) {
   ], version.forceUpdate ? COLORS.red : COLORS.green)] });
 }
 
+async function handleForceUpdate(interaction) {
+  if(accessLevel(interaction)!=="owner")throw new Error("Only configured owner IDs can use /forceupdate.");
+  const enabled=interaction.options.getBoolean("enabled",true);
+  const version=interaction.options.getString("version")?.trim();
+  const updateUrl=interaction.options.getString("update_url")?.trim();
+  const message=interaction.options.getString("message")?.trim();
+  if(enabled&&(!version||!updateUrl))throw new Error("When enabling, provide version and update_url. Upload the release before requiring it.");
+  const result=await api("/v1/admin/force-update",{method:"POST",actor:interaction.user.id,body:JSON.stringify({enabled,version,updateUrl,message})});
+  const state=result.version;
+  return interaction.editReply({embeds:[embed(enabled?"Update required":"Update requirement released",[
+    {name:"Required version",value:state.requiredVersion,inline:true},
+    {name:"Force update",value:state.forceUpdate?"Enabled":"Disabled",inline:true},
+    {name:"Download",value:state.updateUrl||"Not configured"},
+    {name:"Message",value:state.message},
+    {name:"Client behavior",value:"Supporting clients check at startup and about once a minute while connected. Active temporary tweaks restore before the update screen. Older clients enforce the version on their next license check."}
+  ],enabled?COLORS.yellow:COLORS.green)]});
+}
+
 async function handleVersionStatus(interaction) {
   const result = await api("/v1/admin/version", { actor: interaction.user.id });
   const version = result.version;
@@ -413,7 +431,7 @@ async function handleHelp(interaction) {
     { name: "Everyone (bot DMs)", value: "`/whatsmykey` privately shows all linked keys. `/whatsmytrialkey` recovers the exact latest timed key linked to your account." },
     { name: "Staff", value: "`/genkey` `/keyinfo` `/finduser` `/listkeys` `/resetdevices` `/devices` `/versionstatus` `/systemstatus`" },
     { name: "Admin", value: "`/reissuekey` `/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog` `/setupwelcome` `/testwelcome` `/setuptickets`" },
-    { name: "Owner only", value: "`/deleteallkeys` `/setversion` `/sendthismessage` `/publishupdate` `/paymentreminder`" },
+    { name: "Owner only", value: "`/deleteallkeys` `/setversion` `/forceupdate` `/sendthismessage` `/publishupdate` `/paymentreminder`" },
     { name: "Your access", value: accessLevel(interaction) },
     { name: "Deletion safety", value: "Revoking disables a key but keeps its record. Deleting permanently removes it and cannot be undone." }
   ])] });
@@ -438,6 +456,7 @@ const handlers = {
   extendallkeys: handleExtendAll,
   maintenance: handleMaintenance,
   setversion: handleSetVersion,
+  forceupdate: handleForceUpdate,
   versionstatus: handleVersionStatus,
   systemstatus: handleSystemStatus,
   auditlog: handleAuditLog,
@@ -502,7 +521,7 @@ client.on("messageCreate", message => {
 });
 
 client.once("ready", async () => {
-  console.log(`Quilted Tweaks Helper 0.8.1 logged in as ${client.user.tag}`);
+  console.log(`Quilted Tweaks Helper 0.8.2 logged in as ${client.user.tag}`);
   console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
   client.user.setPresence({ activities: [{ name: "Quilted Tweaks Support" }], status: "online" });
   try {
