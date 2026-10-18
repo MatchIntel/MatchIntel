@@ -1,5 +1,6 @@
 import {Router} from 'express';
 import {query,tx} from './db.js';
+import {config} from './config.js';
 import {requireAdmin} from './auth.js';
 import {createQtService,qtPublicLicense,qtDeviceHash} from './qtLicenses.js';
 import {randomUuid} from './security.js';
@@ -39,6 +40,12 @@ export function createQuiltedAdminRouter({execute=query,transaction=tx,service=c
  router.post('/licenses/:ref/:action',handle(async req=>{const action=req.params.action==='reset-devices'?'reset':req.params.action;if(!['reset','revoke','restore','extend','convert-lifetime','transfer'].includes(action))failure(400,'QT-ACTION','Unknown key action.');const r=await service.manage(req.params.ref,action,req.body||{},actorId(req));return r;}));
  router.get('/version',handle(async req=>{actorId(req);return {version:(await service.settings.get()).version};}));
  router.post('/version',handle(req=>service.settings.update('version',req.body||{},actorId(req))));
+ router.post('/force-update',handle(req=>{
+  const actor=actorId(req);
+  if(!config.qtOwnerIds.size)failure(503,'QT-OWNER-CONFIG','Set OWNER_DISCORD_IDS on the backend to the same owner IDs used by the bot.');
+  if(!config.qtOwnerIds.has(actor))failure(403,'QT-OWNER-ONLY','Only a configured owner can change the update requirement.');
+  return service.settings.forceUpdate(req.body||{},actor);
+ }));
  router.post('/maintenance',handle(req=>service.settings.update('maintenance',req.body||{},actorId(req))));
  router.get('/status',handle(async req=>{actorId(req);const all=(await execute('SELECT * FROM qt_licenses')).rows;const state=await service.settings.get();const active=all.filter(r=>r.status==='active'&&(!r.expires_at||new Date(r.expires_at)>new Date()));const sessions=(await execute('SELECT COUNT(*)::int count FROM qt_refresh_tokens WHERE revoked_at IS NULL AND expires_at>NOW()')).rows[0].count;return {status:'online',version:state.version.latestVersion,minimumVersion:state.version.minimumVersion,forceUpdate:state.version.forceUpdate,maintenance:state.maintenance.enabled,totalLicenses:all.length,activeLicenses:active.length,activeLifetime:active.filter(r=>r.plan==='lifetime').length,activeTrial:active.filter(r=>r.plan==='trial').length,revokedLicenses:all.filter(r=>r.status==='revoked').length,linkedLicenses:all.length,devices:all.filter(r=>r.device_hash).length,sessions};}));
  router.get('/audit',handle(async req=>{actorId(req);const limit=Math.max(1,Math.min(20,Number(req.query.limit)||10));const action=String(req.query.action||'');const result=action?await execute("SELECT * FROM audit_logs WHERE action LIKE 'qt.%' AND action=$1 ORDER BY created_at DESC LIMIT $2",[action,limit]):await execute("SELECT * FROM audit_logs WHERE action LIKE 'qt.%' ORDER BY created_at DESC LIMIT $1",[limit]);return {entries:result.rows};}));

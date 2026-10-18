@@ -6,6 +6,17 @@ export function createQtSettings({execute,transaction}){
  const merge=rows=>{const result=defaults();for(const row of rows){if(row.key==='qt_maintenance')result.maintenance={...result.maintenance,...row.value};if(row.key==='qt_version')result.version={...result.version,...row.value,source:'database'};}result.version.requiredVersion=requiredClientVersion(result.version);return result;};
  return {
   async get(){return merge((await execute("SELECT key,value FROM app_settings WHERE key IN ('qt_maintenance','qt_version')")).rows);},
+  async forceUpdate(input,actor){
+   if(typeof input.enabled!=='boolean')throw Object.assign(new Error('Set enabled to true or false.'),{status:400,code:'QT-FORCE-STATE'});
+   const current=(await this.get()).version;
+   const latest=input.enabled?normalizeVersion(input.version):current.latestVersion;
+   let url=current.updateUrl;
+   if(input.enabled){
+    try{const parsed=new URL(String(input.updateUrl||''));if(parsed.protocol!=='https:'||!parsed.hostname||parsed.username||parsed.password||parsed.href.length>1000)throw Error();url=parsed.href;}
+    catch{throw Object.assign(new Error('Provide a public HTTPS download page without embedded credentials.'),{status:400,code:'QT-UPDATE-URL'});}
+   }
+   return this.update('version',{minimumVersion:current.minimumVersion,latestVersion:latest,forceUpdate:input.enabled,updateUrl:url,message:input.message||current.message},actor);
+  },
   async update(kind,input,actor){
    const current=await this.get();let value;
    if(kind==='maintenance'){value={enabled:Boolean(input.enabled),message:String(input.message||current.maintenance.message).trim().slice(0,500)};}
@@ -15,4 +26,8 @@ export function createQtSettings({execute,transaction}){
    return kind==='version'?{version:(await this.get()).version}:{...(await this.get()).maintenance,note:'Quilted Tweaks activation checks use this setting.'};
   }
  };
+}
+
+export function qtUpdatePayload(version){
+ return {requiredVersion:requiredClientVersion(version),minimumVersion:version.minimumVersion,latestVersion:version.latestVersion,forceUpdate:Boolean(version.forceUpdate),updateUrl:version.updateUrl||'',message:version.message||'Update QT Premium Utility to continue.'};
 }

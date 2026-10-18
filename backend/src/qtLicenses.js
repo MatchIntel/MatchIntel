@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
-import {createQtSettings} from "./qtSettings.js";
+import {createQtSettings,qtUpdatePayload} from "./qtSettings.js";
 import { Router } from "express";
 import { rateLimit } from "express-rate-limit";
 import { query, tx } from "./db.js";
@@ -47,7 +47,7 @@ export function createQtService({transaction=tx,execute=query}={}) {
  const usable=row=>{if(row.status!=="active")fail(403,"QT-KEY-REVOKED","This QT key has been revoked. Contact support.");if(future(row.expires_at))fail(403,"QT-KEY-EXPIRED","This QT key has expired.");};
  const runtime=async version=>{
   const state=await settings.get();if(state.maintenance.enabled)fail(503,"QT-MAINTENANCE",state.maintenance.message);
-  if(typeof version!=="string"||!/^\d+\.\d+\.\d+(?:[+-][a-zA-Z0-9.-]+)?$/.test(version)||compareVersions(version,state.version.requiredVersion)<0)fail(426,"QT-UPDATE-REQUIRED",state.version.message);
+  if(typeof version!=="string"||!/^\d+\.\d+\.\d+(?:[+-][a-zA-Z0-9.-]+)?$/.test(version)||compareVersions(version,state.version.requiredVersion)<0){throw Object.assign(new Error(state.version.message),{status:426,code:"QT-UPDATE-REQUIRED",update:qtUpdatePayload(state.version)});}
  };
  const tokens=async(client,row,deviceHash)=>{
   const refreshToken=randomToken();const lifetime=Math.min(config.qtAccessTokenMinutes*60,row.expires_at?Math.floor((new Date(row.expires_at)-Date.now())/1000):Infinity);
@@ -155,9 +155,9 @@ export function createQtService({transaction=tx,execute=query}={}) {
 export function createQtRouter(service=createQtService()) {
  const router=Router();
  router.use((_req,res,next)=>{res.setHeader("Cache-Control","no-store");next();});
- const call=fn=>async(req,res)=>{try{res.json(await fn(req));}catch(error){res.status(error.status||500).json({code:error.code||"QT-SERVER",message:error.status?error.message:"QT licensing is temporarily unavailable. Try again shortly."});}};
+ const call=fn=>async(req,res)=>{try{res.json(await fn(req));}catch(error){res.status(error.status||500).json({code:error.code||"QT-SERVER",message:error.status?error.message:"QT licensing is temporarily unavailable. Try again shortly.",...(error.status===426?error.update:{})});}};
  const activationLimit=rateLimit({windowMs:15*60000,limit:30,skipSuccessfulRequests:true,standardHeaders:true,legacyHeaders:false,message:{code:"QT-RATE-LIMIT",message:"Too many activation attempts. Wait 15 minutes before trying again."}});
- router.get("/config",call(async()=>{const state=await service.settings.get();return {product:QT_PRODUCT,protocol:1,minimumVersion:state.version.minimumVersion,maintenance:state.maintenance.enabled};}));
+ router.get("/config",call(async()=>{const state=await service.settings.get();return {product:QT_PRODUCT,protocol:1,...qtUpdatePayload(state.version),maintenance:state.maintenance.enabled};}));
  router.post("/licenses/activate",activationLimit,call(req=>service.activate(req.body||{})));
  router.post("/auth/refresh",call(req=>service.refresh(req.body||{})));
  router.get("/licenses/status",call(req=>service.status(String(req.headers.authorization||"").replace(/^Bearer /,""),req.headers["x-qt-device"])));

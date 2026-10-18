@@ -27,6 +27,7 @@ const requiredNames = [
 ];
 
 export const config = {
+  qtOwnerIds: new Set(text("OWNER_DISCORD_IDS").split(/[,\s]+/).filter(x=>/^\d{15,25}$/.test(x))),
   qtMinimumVersion: text("QUILTED_MINIMUM_APP_VERSION", text("QT_MINIMUM_APP_VERSION", "2.6.1")),
   qtMaintenance: boolean("QUILTED_MAINTENANCE_MODE", boolean("QT_MAINTENANCE_MODE", false)),
   qtAccessTokenMinutes: number("QT_ACCESS_TOKEN_MINUTES", 15, { min: 5, max: 60 }),
