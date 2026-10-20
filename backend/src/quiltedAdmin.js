@@ -4,11 +4,13 @@ import {config} from './config.js';
 import {requireAdmin} from './auth.js';
 import {createQtService,qtPublicLicense,qtDeviceHash} from './qtLicenses.js';
 import {randomUuid} from './security.js';
+import {createSalesRouter,createSalesService} from './sales.js';
 const failure=(status,code,message)=>{throw Object.assign(new Error(message),{status,code});};
 function actorId(req){const raw=String(req.headers['x-admin-actor']||'');const match=/^(?:discord-(?:trial-)?self:)?(\d{15,25})$/.exec(raw);if(!match)failure(400,'QT-ACTOR','A Discord actor ID is required.');if(raw.includes('self:')&&req.params.userId!==match[1])failure(403,'QT-OWNER','Customer recovery can only show your own keys.');return match[1];}
 const scopeCondition=scope=>{const sql={all:'TRUE',active:"status='active' AND (expires_at IS NULL OR expires_at>NOW())",revoked:"status='revoked'",expired:'expires_at IS NOT NULL AND expires_at<=NOW()',trial:"plan='trial'",lifetime:"plan='lifetime'"}[scope];if(!sql)failure(400,'QT-SCOPE','Unknown scope.');return sql;};
 export function createQuiltedAdminRouter({execute=query,transaction=tx,service=createQtService({execute,transaction})}={}){
  const router=Router();router.use(requireAdmin);router.use((_req,res,next)=>{res.setHeader('Cache-Control','no-store');next();});
+ router.use('/sales/guilds/:guildId',createSalesRouter({service:createSalesService({execute,transaction})}));
  const handle=fn=>async(req,res)=>{try{res.json(await fn(req));}catch(e){res.status(e.status||500).json({code:e.code||'QT-ADMIN',message:e.status?e.message:'Quilted Tweaks administration is temporarily unavailable.'});}};
  const audit=(c,action,actor,target,details={})=>c.query('INSERT INTO audit_logs(id,action,actor,target,details) VALUES($1,$2,$3,$4,$5)',[randomUuid(),'qt.'+action,actor,target,JSON.stringify(details)]);
  const revokeTokens=async(c,ids)=>{const r=await c.query('UPDATE qt_refresh_tokens SET revoked_at=NOW() WHERE license_id=ANY($1::uuid[]) AND revoked_at IS NULL RETURNING id',[ids]);return r.rowCount;};

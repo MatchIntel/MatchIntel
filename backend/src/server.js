@@ -56,7 +56,7 @@ app.get("/health", async (_req, res) => {
   res.status(200).json({
     status: "ok",
     service: "quilted-tweaks-backend",
-    version: "0.8.2",
+    version: "0.9.0",
     uptimeSeconds: Math.floor(process.uptime()),
     qtLicensing: { protocol: 1, minimumVersion: config.qtMinimumVersion, maintenance: config.qtMaintenance },
     configuration: missingEnvironment.length ? "incomplete" : "ready",
@@ -95,7 +95,7 @@ app.get("/ready", async (_req, res) => {
   }
   try {
     await pool.query("SELECT 1");
-    res.json({ status: "ready", database: "ready", version: "0.8.2" });
+    res.json({ status: "ready", database: "ready", version: "0.9.0" });
   } catch (error) {
     res.status(503).json({
       status: "not-ready",
@@ -207,7 +207,7 @@ app.use((error, _req, res, _next) => {
 const server = http.createServer(app);
 app.locals.broadcast = attach(server);
 server.listen(config.port, "0.0.0.0", () => {
-  console.log(`Quilted Tweaks backend 0.8.2 listening on 0.0.0.0:${config.port}`);
+  console.log(`Quilted Tweaks backend 0.9.0 listening on 0.0.0.0:${config.port}`);
   const missingEnvironment = missingRequiredEnvironment();
   if (missingEnvironment.length) {
     console.error(`[configuration] Missing required Railway variable(s): ${missingEnvironment.join(", ")}`);
