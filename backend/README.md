@@ -1,8 +1,10 @@
-# Quilted Tweaks backend 0.9.0
+# Quilted Tweaks backend 0.10.0
+
+Adds **unlinked one-PC website key batches**. Read [WEBSITE-KEYS-SETUP.md](WEBSITE-KEYS-SETUP.md). Admins can use `/genwebsitekeys count:100 plan:Lifetime`, download import-ready TXT stock, and recover batches with `/websitebatches` and `/exportwebsitekeys`. Existing Discord-linked `/genkey` and all sales/dashboard features remain supported.
 
 Adds persistent product management, manual paid-sale records, and dashboard data for the matching Discord bot. Read [SALES-SETUP.md](SALES-SETUP.md) for commands, deployment order, accounting definitions, and timezone configuration.
 
-Deploy this backend first into your existing backend folder/repository and redeploy the existing Railway service. Preserve the PostgreSQL database and current secrets. Migration 010 adds sales tables automatically. No new required variable or database is needed. `/ready` reports version 0.9.0 once migrations finish.
+Deploy this backend first into your existing backend folder/repository and redeploy the existing Railway service. Preserve the PostgreSQL database and current secrets. Migration 010 adds sales tables automatically. No new required variable or database is needed. `/ready` reports version 0.10.0 once migrations finish.
 
 Existing QT licensing (`/v1/qt` and `/v1/qt-admin`), tickets/community storage, activation timing, and owner force-update controls remain supported. Read QUILTED-SETUP.md and FORCE-UPDATE-SETUP.md for those features. The retired game analytics worker remains off.
 

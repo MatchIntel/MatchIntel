@@ -26,7 +26,7 @@ export function qtPublicLicense(row, reveal=false) {
   pendingActivation:row.plan==="trial"&&!row.activated_at,maxDevices:1,deviceBound:Boolean(row.device_hash),
   deviceCount:row.device_hash?1:0,isFreeTrial:false,isUsable:row.status==="active"&&(!row.expires_at||new Date(row.expires_at)>new Date()),features:["optimizer"],
   ...(reveal?{fullKey:decryptLicenseKey(row.key_ciphertext),fullKeyAvailable:Boolean(decryptLicenseKey(row.key_ciphertext)),deviceHash:row.device_hash,licenseKey:decryptLicenseKey(row.key_ciphertext),discordUserId:row.discord_user_id,
-   discordUsername:row.discord_username,deviceName:row.device_name,boundAt:row.bound_at,lastSeenAt:row.last_seen_at,
+   discordUsername:row.discord_username,source:row.issuance_source||'discord',websiteBatchId:row.website_batch_id||null,deviceName:row.device_name,boundAt:row.bound_at,lastSeenAt:row.last_seen_at,
    note:row.note,revokedReason:row.revoked_reason}: {})};
 }
 export function createQtService({transaction=tx,execute=query}={}) {
