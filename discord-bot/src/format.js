@@ -64,7 +64,7 @@ export function licenseFields(license, { showRecoveryNote = false } = {}) {
       name: "Full license key",
       value: "Not recoverable for this older key. Use `/reissuekey` to replace it with a new recoverable key."
     }] : []),
-    { name: "Owner", value: license.discordUserId ? `<@${license.discordUserId}> (\`${license.discordUserId}\`)` : "Unlinked" },
+    { name: "Owner", value: license.discordUserId ? `<@${license.discordUserId}> (\`${license.discordUserId}\`)` : license.source === 'website' ? 'Website key — no Discord account required' : "Unlinked" },
     { name: "Plan", value: license.plan, inline: true },
     { name: "Status", value: licenseStatusText(license), inline: true },
     { name: "Devices", value: `${license.deviceCount}/${license.maxDevices}`, inline: true },

@@ -4,6 +4,8 @@ import { commands, publicCommands } from "./commands.js";
 import { api } from "./api.js";
 import { canUse, accessLevel } from "./access.js";
 import { createSalesHandlers, SALES_ADMIN_COMMANDS } from './sales.js';
+import { createWebsiteKeyHandlers } from './websiteKeys.js';
+import { WEBSITE_KEY_COMMAND_NAMES } from './websiteKeyCommands.js';
 import { COLORS, discordTime, durationText, embed, licenseExpiryText, licenseFields, licenseLabel, truncate } from "./format.js";
 import {
   announceReleaseOnce,
@@ -23,6 +25,7 @@ import {
 
 const ADMIN_COMMANDS = new Set([
   ...SALES_ADMIN_COMMANDS,
+  ...WEBSITE_KEY_COMMAND_NAMES,
   "revokekey", "revokeuser", "restorekey", "convertkey", "transferkey",
   "deletekey", "reissuekey", "extendkey", "extendallkeys", "maintenance", "setversion", "auditlog",
   "setupwelcome", "testwelcome", "setuptickets"
@@ -410,6 +413,7 @@ async function handleSystemStatus(interaction) {
     { name: "Trials", value: String(result.activeTrial), inline: true },
     { name: "Revoked", value: String(result.revokedLicenses), inline: true },
     { name: "Discord linked", value: String(result.linkedLicenses), inline: true },
+    { name: "Website keys", value: String(result.websiteLicenses ?? 0), inline: true },
     { name: "Devices", value: String(result.devices), inline: true },
     { name: "Sessions", value: String(result.sessions), inline: true }
   ], COLORS.green)] });
@@ -434,6 +438,7 @@ async function handleHelp(interaction) {
     { name: "Staff", value: "`/genkey` `/keyinfo` `/finduser` `/listkeys` `/resetdevices` `/devices` `/versionstatus` `/systemstatus`" },
     { name: "Admin", value: "`/reissuekey` `/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog` `/setupwelcome` `/testwelcome` `/setuptickets`" },
     { name: "Sales", value: "Staff: `/confirm` `/products`\nAdmin/owner: `/addproduct` `/editproduct` `/dashboard` `/sales` `/voidsale`\nAll sales replies are private. Amounts are USD." },
+    { name: "Website key stock (admin/owner)", value: "`/genwebsitekeys` generates 1–1000 one-PC keys without a Discord customer and sends a private TXT. `/websitebatches` lists batches; `/exportwebsitekeys` recovers a batch." },
     { name: "Owner only", value: "`/deleteallkeys` `/setversion` `/forceupdate` `/sendthismessage` `/publishupdate` `/paymentreminder`" },
     { name: "Your access", value: accessLevel(interaction) },
     { name: "Deletion safety", value: "Revoking disables a key but keeps its record. Deleting permanently removes it and cannot be undone." }
@@ -443,6 +448,7 @@ async function handleHelp(interaction) {
 const salesHandlers = createSalesHandlers();
 const handlers = {
   ...salesHandlers,
+  ...createWebsiteKeyHandlers(),
   genkey: handleGenKey,
   keyinfo: handleKeyInfo,
   reissuekey: handleReissueKey,
@@ -527,7 +533,7 @@ client.on("messageCreate", message => {
 });
 
 client.once("ready", async () => {
-  console.log(`Quilted Tweaks Helper 0.9.0 logged in as ${client.user.tag}`);
+  console.log(`Quilted Tweaks Helper 0.10.0 logged in as ${client.user.tag}`);
   console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
   client.user.setPresence({ activities: [{ name: "Quilted Tweaks Support" }], status: "online" });
   try {
