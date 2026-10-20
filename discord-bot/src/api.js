@@ -34,7 +34,7 @@ export async function api(path, options = {}) {
   }
   if (!response.ok) {
     const missingQuiltedRoutes=response.status===404&&!body.code&&routeApiPath(path).startsWith("/v1/qt-admin/");
-    const error = new Error(missingQuiltedRoutes?(path.endsWith("/force-update")?"Deploy Quilted Tweaks backend 0.8.2 first; its force-update route is not available yet.":"Deploy Quilted Tweaks backend 0.8.1 first; its licensing routes are not available yet."):body.message || `Backend returned HTTP ${response.status}`);
+    const error = new Error(missingQuiltedRoutes?(path.includes('/sales/')?"Deploy Quilted Tweaks backend 0.9.0 first; its sales routes are not available yet.":path.endsWith("/force-update")?"Deploy Quilted Tweaks backend 0.8.2 first; its force-update route is not available yet.":"Deploy Quilted Tweaks backend 0.8.1 first; its licensing routes are not available yet."):body.message || `Backend returned HTTP ${response.status}`);
     error.code = missingQuiltedRoutes?"QT-BACKEND-UPDATE":body.code;
     error.status = response.status;
     throw error;

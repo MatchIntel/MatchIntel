@@ -1,4 +1,5 @@
 import { ChannelType, SlashCommandBuilder } from "discord.js";
+import { salesCommands } from './salesCommands.js';
 
 const planChoices = [
   { name: "Trial", value: "trial" },
@@ -216,7 +217,7 @@ const commandBuilders = [
     .addChannelOption(option => option.setName("channel").setDescription("Defaults to the configured Quilted Tweaks updates channel").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
 ]
 
-export const commands = commandBuilders.map(command => command.toJSON());
+export const commands = [...commandBuilders, ...salesCommands].map(command => command.toJSON());
 
 export const publicCommands = [
   new SlashCommandBuilder()

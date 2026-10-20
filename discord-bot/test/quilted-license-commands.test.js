@@ -6,7 +6,7 @@ function compile(name,next,api){return vm.runInNewContext(source.slice(source.in
 test('original command names and argument names remain; no product picker or /qtkey',()=>{
  for(const name of ['genkey','keyinfo','reissuekey','finduser','listkeys','resetdevices','devices','revokekey','revokeuser','restorekey','convertkey','transferkey','deletekey','deleteallkeys','extendkey','extendallkeys','maintenance','setversion','versionstatus','systemstatus','auditlog','setuptickets','paymentreminder'])assert.ok(commands.some(c=>c.name===name),name);
  assert.ok(!commands.some(c=>c.name==='qtkey'||c.name==='qtmykey'));const gen=commands.find(c=>c.name==='genkey');assert.deepEqual(gen.options.map(o=>o.name),['user','plan','trial_days','devices','note']);assert.equal(gen.options.find(o=>o.name==='devices').max_value,1);assert.ok(publicCommands.some(c=>c.name==='whatsmykey'));
- for(const command of commands){assert.ok(!command.options?.some(o=>o.name==='product'));assert.doesNotMatch(JSON.stringify(command),/MatchIntel/);}
+ for(const command of commands){if(!['editproduct','confirm','dashboard'].includes(command.name))assert.ok(!command.options?.some(o=>o.name==='product'));assert.doesNotMatch(JSON.stringify(command),/MatchIntel/);}
 });
 test('all old license/runtime API paths route to Quilted, while live ticket storage stays compatible',()=>{
  for(const path of ['/v1/admin/licenses','/v1/admin/keyinfo','/v1/admin/licenses/x/reset-devices','/v1/admin/users/u/licenses/reveal','/v1/admin/version','/v1/admin/status','/v1/admin/maintenance','/v1/admin/audit?limit=10'])assert.equal(routeApiPath(path),path.replace('/v1/admin','/v1/qt-admin'));

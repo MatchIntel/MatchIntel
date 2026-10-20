@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { commands, publicCommands } from "./commands.js";
 import { api } from "./api.js";
 import { canUse, accessLevel } from "./access.js";
+import { createSalesHandlers, SALES_ADMIN_COMMANDS } from './sales.js';
 import { COLORS, discordTime, durationText, embed, licenseExpiryText, licenseFields, licenseLabel, truncate } from "./format.js";
 import {
   announceReleaseOnce,
@@ -21,6 +22,7 @@ import {
 } from "./community.js";
 
 const ADMIN_COMMANDS = new Set([
+  ...SALES_ADMIN_COMMANDS,
   "revokekey", "revokeuser", "restorekey", "convertkey", "transferkey",
   "deletekey", "reissuekey", "extendkey", "extendallkeys", "maintenance", "setversion", "auditlog",
   "setupwelcome", "testwelcome", "setuptickets"
@@ -431,13 +433,16 @@ async function handleHelp(interaction) {
     { name: "Everyone (bot DMs)", value: "`/whatsmykey` privately shows all linked keys. `/whatsmytrialkey` recovers the exact latest timed key linked to your account." },
     { name: "Staff", value: "`/genkey` `/keyinfo` `/finduser` `/listkeys` `/resetdevices` `/devices` `/versionstatus` `/systemstatus`" },
     { name: "Admin", value: "`/reissuekey` `/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog` `/setupwelcome` `/testwelcome` `/setuptickets`" },
+    { name: "Sales", value: "Staff: `/confirm` `/products`\nAdmin/owner: `/addproduct` `/editproduct` `/dashboard` `/sales` `/voidsale`\nAll sales replies are private. Amounts are USD." },
     { name: "Owner only", value: "`/deleteallkeys` `/setversion` `/forceupdate` `/sendthismessage` `/publishupdate` `/paymentreminder`" },
     { name: "Your access", value: accessLevel(interaction) },
     { name: "Deletion safety", value: "Revoking disables a key but keeps its record. Deleting permanently removes it and cannot be undone." }
   ])] });
 }
 
+const salesHandlers = createSalesHandlers();
 const handlers = {
+  ...salesHandlers,
   genkey: handleGenKey,
   keyinfo: handleKeyInfo,
   reissuekey: handleReissueKey,
@@ -471,6 +476,7 @@ const handlers = {
 
 client.on("interactionCreate", async interaction => {
   try {
+    if (interaction.isAutocomplete()) return await salesHandlers.autocomplete(interaction);
     if (interaction.isButton() && interaction.customId.startsWith("mi_ticket_")) {
       await handleTicketButton(interaction);
       return;
@@ -521,7 +527,7 @@ client.on("messageCreate", message => {
 });
 
 client.once("ready", async () => {
-  console.log(`Quilted Tweaks Helper 0.8.2 logged in as ${client.user.tag}`);
+  console.log(`Quilted Tweaks Helper 0.9.0 logged in as ${client.user.tag}`);
   console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
   client.user.setPresence({ activities: [{ name: "Quilted Tweaks Support" }], status: "online" });
   try {
