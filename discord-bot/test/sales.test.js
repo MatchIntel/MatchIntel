@@ -32,7 +32,7 @@ test('sales commands have valid options, autocomplete, and distinct access witho
   }
   assert.equal(commands.find(c => c.name === 'genkey').options.some(o => o.name === 'product'), false);
   assert.equal(publicCommands.some(c => c.name === 'confirm' || c.name === 'dashboard'), false);
-  assert.match(source, /\.\.\.SALES_ADMIN_COMMANDS/); assert.match(source, /isAutocomplete\(\)/); assert.match(source, /deferReply\(\{ ephemeral: true \}\)/);
+  assert.match(source, /\.\.\.SALES_ADMIN_COMMANDS/); assert.match(source, /isAutocomplete\(\)/); assert.match(source, /deferReply\(\{ flags: MessageFlags\.Ephemeral \}\)/);
 });
 test('unauthorized users and wrong servers cannot read or write sales or autocomplete', async () => {
   let called = 0;

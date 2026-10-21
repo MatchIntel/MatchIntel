@@ -20,7 +20,7 @@ test('registered admin commands require no user option and cap mass generation a
   assert.ok(c.options.every(o => o.name !== 'user' && o.name !== 'devices')); assert.equal(c.options.find(o => o.name === 'trial_days').max_value, 30);
   for (const n of ['genwebsitekeys', 'websitebatches', 'exportwebsitekeys']) { assert.ok(commands.some(c => c.name === n)); assert.ok(!publicCommands.some(c => c.name === n)); }
   const linked = commands.find(c => c.name === 'genkey'); assert.equal(linked.options.find(o => o.name === 'user').required, true); assert.equal(linked.options.find(o => o.name === 'devices').max_value, 1);
-  const source = await fs.readFile(new URL('../src/index.js', import.meta.url), 'utf8'); assert.match(source, /\.\.\.WEBSITE_KEY_COMMAND_NAMES/); assert.match(source, /\.\.\.createWebsiteKeyHandlers\(\)/); assert.match(source, /deferReply\(\{ ephemeral: true \}\)/);
+  const source = await fs.readFile(new URL('../src/index.js', import.meta.url), 'utf8'); assert.match(source, /\.\.\.WEBSITE_KEY_COMMAND_NAMES/); assert.match(source, /\.\.\.createWebsiteKeyHandlers\(\)/); assert.match(source, /deferReply\(\{ flags: MessageFlags\.Ephemeral \}\)/);
 });
 test('only owners/admins in configured server may mint, list, or export', async () => {
   let calls = 0; const h = createWebsiteKeyHandlers({ request: async () => { calls++; throw Error('unexpected'); } });

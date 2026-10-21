@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, REST, Routes } from "discord.js";
+import { Client, Events, GatewayIntentBits, MessageFlags, REST, Routes } from "discord.js";
 import { config } from "./config.js";
 import { commands, publicCommands } from "./commands.js";
 import { api } from "./api.js";
@@ -50,7 +50,7 @@ function username(user) {
 }
 
 async function deny(interaction, message) {
-  const payload = { content: message, ephemeral: true };
+  const payload = { content: message, flags: MessageFlags.Ephemeral };
   if (interaction.deferred || interaction.replied) return interaction.editReply(payload);
   return interaction.reply(payload);
 }
@@ -136,8 +136,7 @@ async function handleFindUser(interaction) {
   const lines = result.licenses.slice(0, 20).map(licenseLabel);
   return interaction.editReply({ embeds: [embed(`Keys linked to ${username(target)}`, [
     { name: "Discord account", value: `${target} (\`${target.id}\`)` },
-    { name: `Licenses (${result.licenses.length})`, value: truncate(lines.join("\n") || "No licenses found.", 4000) }
-  ], lines.length ? COLORS.blue : COLORS.yellow)] });
+  ], lines.length ? COLORS.blue : COLORS.yellow).setDescription(truncate(lines.join("\n") || "No licenses found.", 4000))], allowedMentions: { parse: [] } });
 }
 
 async function handleListKeys(interaction) {
@@ -149,9 +148,10 @@ async function handleListKeys(interaction) {
   if (plan) params.set("plan", plan);
   const result = await api(`/v1/admin/licenses?${params}`, { actor: interaction.user.id });
   const lines = result.licenses.map(license => `${licenseLabel(license)}${license.discordUserId ? ` • <@${license.discordUserId}>` : " • Unlinked"}`);
-  return interaction.editReply({ embeds: [embed("Recent Quilted Tweaks keys", [
-    { name: `Results (${result.licenses.length})`, value: truncate(lines.join("\n") || "No licenses found.", 4000) }
-  ])] });
+  const fields = lines.map((value, index) => ({ name: `Key ${index + 1}`, value }));
+  return interaction.editReply({ embeds: [embed("Recent Quilted Tweaks keys", fields.length ? fields : [
+    { name: "Results", value: "No licenses found." }
+  ]).setFooter({ text: `${result.licenses.length} result${result.licenses.length === 1 ? "" : "s"}` })], allowedMentions: { parse: [] } });
 }
 
 async function handleResetDevices(interaction) {
@@ -188,8 +188,7 @@ async function handleDevices(interaction) {
   );
   return interaction.editReply({ embeds: [embed("Bound devices", [
     { name: "License", value: `\`${result.license.id}\`` },
-    { name: `Devices (${result.devices.length}/${result.license.maxDevices})`, value: truncate(lines.join("\n\n") || "No devices are currently bound.", 4000) }
-  ])] });
+  ]).setDescription(truncate(lines.join("\n\n") || "No devices are currently bound.", 4000))] });
 }
 
 async function handleRevokeKey(interaction) {
@@ -402,9 +401,8 @@ async function handleAuditLog(interaction) {
   const lines = result.entries.map(entry =>
     `**${entry.action}** • ${discordTime(entry.created_at)}\nActor: \`${entry.actor || "unknown"}\` • Target: \`${entry.target || "none"}\``
   );
-  return interaction.editReply({ embeds: [embed("Recent Quilted Tweaks audit log", [
-    { name: `Entries (${result.entries.length})`, value: truncate(lines.join("\n\n") || "No entries found.", 4000) }
-  ], COLORS.yellow)] });
+  return interaction.editReply({ embeds: [embed("Recent Quilted Tweaks audit log", [], COLORS.yellow)
+    .setDescription(truncate(lines.join("\n\n") || "No entries found.", 4000))] });
 }
 
 async function handleHelp(interaction) {
@@ -486,7 +484,7 @@ client.on("interactionCreate", async interaction => {
       return deny(interaction, "This command is restricted to configured Quilted Tweaks owner IDs.");
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const handler = handlers[interaction.commandName];
     if (!handler) return interaction.editReply("Unknown command.");
     await handler(interaction);
@@ -495,7 +493,7 @@ client.on("interactionCreate", async interaction => {
     const code = error.code ? ` (${error.code})` : "";
     const message = `Error${code}: ${error.message || "Unknown error"}`;
     if (interaction.deferred || interaction.replied) await interaction.editReply(message).catch(() => {});
-    else await interaction.reply({ content: message, ephemeral: interaction.inGuild() }).catch(() => {});
+    else await interaction.reply({ content: message, flags: interaction.inGuild() ? MessageFlags.Ephemeral : undefined }).catch(() => {});
   }
 });
 
@@ -510,8 +508,8 @@ client.on("messageCreate", message => {
   })();
 });
 
-client.once("ready", async () => {
-  console.log(`Quilted Tweaks Helper 0.12.1 logged in as ${client.user.tag}`);
+client.once(Events.ClientReady, async () => {
+  console.log(`Quilted Tweaks Helper 0.12.2 logged in as ${client.user.tag}`);
   console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
   client.user.setPresence({ activities: [{ name: "Quilted Tweaks Support" }], status: "online" });
   try {

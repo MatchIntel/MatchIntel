@@ -77,7 +77,7 @@ test('staff-only, configured-server-only access survives button clicks and role 
   assert.equal(i.events.length, 0); assert.equal(denied.calls.length, 0);
   const f = fixture(); await assert.rejects(() => f.keyinfo(interaction({ server: 'different' })), /staff/);
   const outsider = interaction({ actor: target }); outsider.customId = i.customId;
-  await f.button(outsider); assert.equal(outsider.events[0][1].ephemeral, true); assert.equal(f.calls.length, 0);
+  await f.button(outsider); assert.equal(outsider.events[0][1].flags, 64); assert.equal(f.calls.length, 0);
 });
 test('old backend responses fail with a deployment instruction instead of showing incomplete keys', async () => {
   const f = createKeyInfoHandlers({ guildId, authorize: () => true, request: async () => ({ licenses: licenses.slice(0, 20) }) });

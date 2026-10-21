@@ -4,6 +4,7 @@ import {
   ButtonStyle,
   ChannelType,
   EmbedBuilder,
+  MessageFlags,
   PermissionFlagsBits
 } from "discord.js";
 import { api } from "./api.js";
@@ -375,7 +376,7 @@ async function createTicket(interaction, ticketType = TICKET_TYPES.general) {
   const guild = interaction.guild;
   const settings = await getGuildSettings(guild.id, { fresh: true });
   if (!settings.ticketCategoryId) {
-    return interaction.reply({ content: "The ticket system has not been configured yet.", ephemeral: true });
+    return interaction.reply({ content: "The ticket system has not been configured yet.", flags: MessageFlags.Ephemeral });
   }
   await Promise.all([guild.channels.fetch(), guild.roles.fetch()]);
   const existing = guild.channels.cache.find(channel => {
@@ -383,7 +384,7 @@ async function createTicket(interaction, ticketType = TICKET_TYPES.general) {
     return parsed?.userId === interaction.user.id && parsed.status === "open";
   });
   if (existing) {
-    return interaction.reply({ content: `You already have an open ticket: ${existing}`, ephemeral: true });
+    return interaction.reply({ content: `You already have an open ticket: ${existing}`, flags: MessageFlags.Ephemeral });
   }
 
   const permissionMap = new Map();
@@ -461,13 +462,13 @@ async function createTicket(interaction, ticketType = TICKET_TYPES.general) {
     await paymentPanel.pin("Official Quilted Tweaks payment methods").catch(() => {});
   }
 
-  await interaction.reply({ content: `Your private ticket is ready: ${channel}`, ephemeral: true });
+  await interaction.reply({ content: `Your private ticket is ready: ${channel}`, flags: MessageFlags.Ephemeral });
 }
 
 async function claimTicket(interaction) {
-  if (!canUse(interaction, "staff")) return interaction.reply({ content: "Only Quilted Tweaks staff can claim tickets.", ephemeral: true });
+  if (!canUse(interaction, "staff")) return interaction.reply({ content: "Only Quilted Tweaks staff can claim tickets.", flags: MessageFlags.Ephemeral });
   const parsed = parseTicketTopic(interaction.channel?.topic);
-  if (!parsed || parsed.status !== "open") return interaction.reply({ content: "This is not an open Quilted Tweaks ticket.", ephemeral: true });
+  if (!parsed || parsed.status !== "open") return interaction.reply({ content: "This is not an open Quilted Tweaks ticket.", flags: MessageFlags.Ephemeral });
   await interaction.channel.setTopic(ticketTopic(
     parsed.userId,
     "open",
@@ -476,14 +477,14 @@ async function claimTicket(interaction) {
     parsed.paymentReminderEnabled
   ));
   await interaction.channel.send({ embeds: [new EmbedBuilder().setColor(COLORS.green).setDescription(`✅ Ticket claimed by <@${interaction.user.id}>.`)] });
-  await interaction.reply({ content: "Ticket claimed.", ephemeral: true });
+  await interaction.reply({ content: "Ticket claimed.", flags: MessageFlags.Ephemeral });
 }
 
 async function closeTicket(interaction) {
   const parsed = parseTicketTopic(interaction.channel?.topic);
-  if (!parsed || parsed.status !== "open") return interaction.reply({ content: "This is not an open Quilted Tweaks ticket.", ephemeral: true });
+  if (!parsed || parsed.status !== "open") return interaction.reply({ content: "This is not an open Quilted Tweaks ticket.", flags: MessageFlags.Ephemeral });
   const isOwner = parsed.userId === interaction.user.id;
-  if (!isOwner && !canUse(interaction, "staff")) return interaction.reply({ content: "Only the ticket opener or Quilted Tweaks staff can close this ticket.", ephemeral: true });
+  if (!isOwner && !canUse(interaction, "staff")) return interaction.reply({ content: "Only the ticket opener or Quilted Tweaks staff can close this ticket.", flags: MessageFlags.Ephemeral });
   await interaction.channel.permissionOverwrites.edit(parsed.userId, { ViewChannel: true, SendMessages: false });
   await interaction.channel.setTopic(ticketTopic(
     parsed.userId,
@@ -497,13 +498,13 @@ async function closeTicket(interaction) {
     embeds: [new EmbedBuilder().setColor(COLORS.yellow).setDescription(`🔒 Ticket closed by <@${interaction.user.id}>.`)],
     components: [ticketClosedButtons()]
   });
-  await interaction.reply({ content: "Ticket closed.", ephemeral: true });
+  await interaction.reply({ content: "Ticket closed.", flags: MessageFlags.Ephemeral });
 }
 
 async function reopenTicket(interaction) {
-  if (!canUse(interaction, "staff")) return interaction.reply({ content: "Only Quilted Tweaks staff can reopen tickets.", ephemeral: true });
+  if (!canUse(interaction, "staff")) return interaction.reply({ content: "Only Quilted Tweaks staff can reopen tickets.", flags: MessageFlags.Ephemeral });
   const parsed = parseTicketTopic(interaction.channel?.topic);
-  if (!parsed || parsed.status !== "closed") return interaction.reply({ content: "This is not a closed Quilted Tweaks ticket.", ephemeral: true });
+  if (!parsed || parsed.status !== "closed") return interaction.reply({ content: "This is not a closed Quilted Tweaks ticket.", flags: MessageFlags.Ephemeral });
   await interaction.channel.permissionOverwrites.edit(parsed.userId, { ViewChannel: true, SendMessages: true });
   await interaction.channel.setTopic(ticketTopic(
     parsed.userId,
@@ -517,16 +518,16 @@ async function reopenTicket(interaction) {
     embeds: [new EmbedBuilder().setColor(COLORS.green).setDescription(`🔓 Ticket reopened by <@${interaction.user.id}>.`)],
     components: [ticketOpenButtons()]
   });
-  await interaction.reply({ content: "Ticket reopened.", ephemeral: true });
+  await interaction.reply({ content: "Ticket reopened.", flags: MessageFlags.Ephemeral });
 }
 
 async function deleteTicket(interaction) {
   if (accessLevel(interaction) !== "owner" && !canUse(interaction, "admin")) {
-    return interaction.reply({ content: "Only Quilted Tweaks admins or owners can permanently delete tickets.", ephemeral: true });
+    return interaction.reply({ content: "Only Quilted Tweaks admins or owners can permanently delete tickets.", flags: MessageFlags.Ephemeral });
   }
   const parsed = parseTicketTopic(interaction.channel?.topic);
-  if (!parsed) return interaction.reply({ content: "This is not a Quilted Tweaks ticket.", ephemeral: true });
-  await interaction.reply({ content: "Deleting this ticket in 4 seconds…", ephemeral: true });
+  if (!parsed) return interaction.reply({ content: "This is not a Quilted Tweaks ticket.", flags: MessageFlags.Ephemeral });
+  await interaction.reply({ content: "Deleting this ticket in 4 seconds…", flags: MessageFlags.Ephemeral });
   setTimeout(() => interaction.channel.delete(`Ticket deleted by ${interaction.user.tag}`).catch(console.error), 4000);
 }
 
@@ -724,7 +725,7 @@ export async function handleWhatsMyKey(interaction) {
   if (interaction.inGuild()) {
     return interaction.reply({
       content: "For your security, open my Discord profile, press **Message**, and use `/whatsmykey` in our private DM.",
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
   }
   await interaction.deferReply();
@@ -772,7 +773,7 @@ export async function handleWhatsMyTrialKey(interaction) {
   if (interaction.inGuild()) {
     return interaction.reply({
       content: "For your security, open my Discord profile, press **Message**, and use `/whatsmytrialkey` in our private DM.",
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
   }
 

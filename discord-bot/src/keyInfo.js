@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } from 'discord.js';
 import { api } from './api.js';
 import { canUse } from './access.js';
 import { config } from './config.js';
@@ -89,7 +89,7 @@ export function createKeyInfoHandlers({ request = api, authorize = canUse, guild
     async button(i) {
       const match = buttonPattern.exec(i.customId);
       if (!match || match[1] !== i.user.id) {
-        return i.reply({ content: 'Run your own /keyinfo lookup to view these pages.', ephemeral: true });
+        return i.reply({ content: 'Run your own /keyinfo lookup to view these pages.', flags: MessageFlags.Ephemeral });
       }
       // Recheck current staff membership before acknowledging or loading any keys.
       check(i);

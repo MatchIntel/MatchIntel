@@ -1,3 +1,7 @@
+## List command fix — v0.12.2
+
+Fixes `/listkeys` exceeding Discord's 1,024-character field limit; all requested results up to 25 now display. Also corrects long user/audit list layouts and updates readiness/private-reply APIs. Deploy this bot only; keep backend v0.12.1, your variables and EXE. See [LISTKEYS-FIX.md](LISTKEYS-FIX.md).
+
 ## Discord user key lookup — v0.12.1
 
 Use `/keyinfo user:@customer` to view every linked key, including website purchases linked through QT Discord sign-in. Private staff results include full keys, plan, status, expiry, source and PC binding count, with Previous/Next pages. Deploy backend v0.12.1 first, then Helper bot v0.12.1. Keep existing variables and database. No EXE update is needed. See [KEYINFO-SETUP.md](KEYINFO-SETUP.md).
