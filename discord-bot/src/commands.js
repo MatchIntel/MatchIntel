@@ -37,8 +37,9 @@ const commandBuilders = [
 
   new SlashCommandBuilder()
     .setName("keyinfo")
-    .setDescription("Find a key using a license value or Device ID")
-    .addStringOption(option => option.setName("reference").setDescription("Full key, key prefix, license ID, or Device ID").setRequired(true)),
+    .setDescription("Show all keys for a Discord user, or look up a key or Device ID")
+    .addUserOption(option => option.setName("user").setDescription("Show every key linked to this Discord account"))
+    .addStringOption(option => option.setName("reference").setDescription("Key, prefix, license ID, Device ID, or Discord user ID")),
 
   new SlashCommandBuilder()
     .setName("reissuekey")

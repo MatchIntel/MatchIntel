@@ -38,7 +38,7 @@ Only configured owners/admin-role users can generate, list, or export website st
 - Concurrent first-activation requests from different PCs cannot claim the same key twice.
 - The existing staff `/resetdevices` command can release a binding when you approve a hardware change. Resetting does not restart a timed key's duration.
 - Revoking, restoring, reissuing, looking up, extending, and deleting keys work through the existing commands. Reissuing an activated key keeps its hardware binding and invalidates the old key.
-- Website keys are not listed by a customer's `/whatsmykey` because no Discord account owns them. Staff can find them using `/keyinfo` with the key or device ID. You can deliberately link one later using `/transferkey` if needed.
+- Unlinked website stock is not listed by a customer's `/whatsmykey`. After the buyer completes Discord sign-in and confirms linking in QT v3.0.0, their website key appears in customer recovery and staff `/keyinfo user:@customer`. Staff can still find unlinked stock by key or device ID. Deliberate staff transfers remain available through `/transferkey`.
 - Existing `/genkey user:...` remains the same Discord-linked generator.
 
 ## Recover an export

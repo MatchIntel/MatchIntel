@@ -18,7 +18,7 @@ function listText(entries, empty) {
   }
   return shown.join('\n\n') + (shown.length < entries.length ? '\n\nMore matches are available. Narrow your search or use a smaller limit.' : '');
 }
-export const SALES_ADMIN_COMMANDS = ['addproduct', 'editproduct', 'dashboard', 'sales', 'voidsale'];
+export const SALES_ADMIN_COMMANDS = ['addproduct', 'editproduct', 'dashboard', 'sales', 'voidsale', 'expense', 'expenses', 'voidexpense'];
 
 export function createSalesHandlers({ request = api, render = renderDashboardPng, authorize = canUse, guildId = config.guildId } = {}) {
   function check(interaction, level = 'admin') {
@@ -53,17 +53,18 @@ export function createSalesHandlers({ request = api, render = renderDashboardPng
       check(i, 'staff');
       const b = omitNulls({ productId: i.options.getString('product', true), price: i.options.getNumber('price'), quantity: i.options.getInteger('quantity'), cost: i.options.getNumber('cost'), fee: i.options.getNumber('fee'), customerId: i.options.getUser('customer')?.id, paymentReference: i.options.getString('reference'), soldOn: i.options.getString('sold_on'), note: i.options.getString('note'), interactionId: i.id });
       const { sale: s, duplicate } = await call(i, '/confirm', { method: 'POST', body: JSON.stringify(b) });
-      return reply(i, duplicate ? 'Sale already recorded' : 'Sale recorded', `**${safe(s.productName)}** · ${s.quantity} unit${s.quantity === 1 ? '' : 's'} × ${money(s.unitPriceCents)}\nRevenue: **${money(s.revenueCents)}**\nRecorded costs: ${money(s.costCents)}\nPayment fee: ${money(s.feeCents)}\nRecorded profit: **${money(s.profitCents)}**\n\nSale ID: \`${s.id}\`${s.voidedAt ? '\n**This entry is voided and excluded from totals.**' : ''}\n\nThis records a payment you already received. License keys are managed with \`/genkey\`.`);
+      return reply(i, duplicate ? 'Sale already recorded' : 'Sale recorded', `**${safe(s.productName)}** · ${s.quantity} unit${s.quantity === 1 ? '' : 's'} × ${money(s.unitPriceCents)}\nRevenue: **${money(s.revenueCents)}**\nRecorded costs: ${money(s.costCents)}\nPayment fee: ${money(s.feeCents)}\nSale profit before business expenses: **${money(s.profitCents)}**\n\nSale ID: \`${s.id}\`${s.voidedAt ? '\n**This entry is voided and excluded from totals.**' : ''}\n\nThis records a payment you already received. License keys are managed with \`/genkey\`.`);
     },
     async dashboard(i) {
       check(i);
       const params = new URLSearchParams({ period: i.options.getString('period') ?? '30d' });
       const product = i.options.getString('product'); if (product) params.set('productId', product);
       const data = await call(i, '/dashboard?' + params);
+      if (!Number.isSafeInteger(data.totals.expenseCents)) throw new Error('Deploy the updated backend with expense tracking first, then run /dashboard again.');
       const png = await render(data, { serverName: i.guild?.name || 'Quilted Tweaks' });
       const name = 'quilted-tweaks-sales-dashboard.png';
-      const attachment = new AttachmentBuilder(png, { name, description: `Quilted Tweaks ${data.period} sales: ${money(data.totals.revenueCents)} revenue, ${money(data.totals.profitCents)} recorded profit, ${data.totals.orders} orders.` });
-      const e = card('Quilted Tweaks sales dashboard', `**${data.totals.orders} sales** · Revenue **${money(data.totals.revenueCents)}** · Recorded profit **${money(data.totals.profitCents)}**\nProfit uses the costs and fees entered with each sale. Reports use ${data.timezone}.`).setImage('attachment://' + name);
+      const attachment = new AttachmentBuilder(png, { name, description: `Quilted Tweaks ${data.period}: ${money(data.totals.revenueCents)} revenue, ${money(data.totals.expenseCents)} expenses, ${money(data.totals.profitCents)} net profit.` });
+      const e = card('Quilted Tweaks sales dashboard', `**${data.totals.orders} sales** · Revenue **${money(data.totals.revenueCents)}**\nBusiness expenses **${money(data.totals.expenseCents)}** · Net profit **${money(data.totals.profitCents)}**\nNet profit = revenue − sale costs − payment fees − expenses. Reports use ${data.timezone}.\n${data.expenseScope || 'Only recorded transactions are included.'}`).setImage('attachment://' + name);
       return i.editReply({ embeds: [e], files: [attachment], allowedMentions: { parse: [] } });
     },
     async sales(i) {
@@ -77,6 +78,26 @@ export function createSalesHandlers({ request = api, render = renderDashboardPng
       const id = i.options.getString('sale_id', true);
       const { sale: s, alreadyVoided } = await call(i, `/records/${encodeURIComponent(id)}/void`, { method: 'POST', body: JSON.stringify({ reason: i.options.getString('reason', true) }) });
       return reply(i, alreadyVoided ? 'Sale already voided' : 'Sale voided', `**${safe(s.productName)}** · ${money(s.revenueCents)}\nSale ID: \`${s.id}\`\n\nExcluded from dashboard totals. Its record and audit history are preserved. This does not send a refund or revoke a license.`);
+    },
+    async expense(i) {
+      check(i);
+      const body = omitNulls({ amount: i.options.getNumber('amount', true), description: i.options.getString('description', true), category: i.options.getString('category'), spentOn: i.options.getString('spent_on'), paymentReference: i.options.getString('reference'), productId: i.options.getString('product'), interactionId: i.id });
+      const { expense: e, duplicate } = await call(i, '/expenses', { method: 'POST', body: JSON.stringify(body) });
+      return reply(i, duplicate ? 'Expense already recorded' : 'Expense recorded', `**${safe(e.description)}**\nAmount: **${money(e.amountCents)}**\nCategory: ${safe(e.category)}\nApplies to: ${e.productName ? safe(e.productName) : 'General business expenses'}\n\nExpense ID: \`${e.id}\`${e.voidedAt ? '\n**This expense is voided and excluded from totals.**' : ''}\n\nDeducted from net profit in \`/dashboard\`. Do not also enter it as a sale cost or fee. This records a purchase you already made; it does not send money.`);
+    },
+    async expenses(i) {
+      check(i);
+      const params = new URLSearchParams({ limit: String(i.options.getInteger('limit') ?? 10), voided: String(i.options.getBoolean('voided') ?? false) });
+      const product = i.options.getString('product'); if (product) params.set('productId', product);
+      const result = await call(i, '/expenses?' + params);
+      const date = value => new Intl.DateTimeFormat('en-CA', { timeZone: result.timezone || 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(value));
+      return reply(i, 'Recorded business expenses', listText(result.expenses.map(e => `${e.voidedAt ? '**VOIDED** · ' : ''}**${safe(e.description)}** · ${money(e.amountCents)}\n${safe(e.category)} · ${date(e.spentAt)} · ${e.productName ? safe(e.productName) : 'General expense'}\n\`${e.id}\``), 'No expenses recorded. Use `/expense` after making a purchase.'));
+    },
+    async voidexpense(i) {
+      check(i);
+      const id = i.options.getString('expense_id', true);
+      const { expense: e, alreadyVoided } = await call(i, `/expenses/${encodeURIComponent(id)}/void`, { method: 'POST', body: JSON.stringify({ reason: i.options.getString('reason', true) }) });
+      return reply(i, alreadyVoided ? 'Expense already voided' : 'Expense voided', `**${safe(e.description)}** · ${money(e.amountCents)}\nExpense ID: \`${e.id}\`\n\nExcluded from net profit and spending totals. The audit record is preserved. Use \`/expense\` to enter a correction; no refund is sent.`);
     },
     async autocomplete(i) {
       if (!salesCommandNames.has(i.commandName)) return i.respond([]);

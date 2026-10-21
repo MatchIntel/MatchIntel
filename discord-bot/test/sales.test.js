@@ -12,7 +12,7 @@ const source = await fs.readFile(new URL('../src/index.js', import.meta.url), 'u
 const guild = '111111111111111111', pid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const product = { id: pid, name: 'QT Premium Utility', priceCents: 2500, costCents: 200, active: true, currency: 'USD' };
 const sale = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', productId: pid, productName: product.name, unitPriceCents: 2500, unitCostCents: 200, quantity: 2, feeCents: 100, costCents: 400, revenueCents: 5000, profitCents: 4500, soldAt: '2026-10-19T12:00:00Z' };
-const data = { period: '7d', currency: 'USD', timezone: 'America/New_York', start: '2026-10-13', end: '2026-10-19', chartStart: '2026-10-13', generatedAt: '2026-10-19T20:00:00Z', product: null, totals: { orders: 2, units: 3, revenueCents: 7500, costCents: 600, feeCents: 150, profitCents: 6750, averageOrderCents: 3750 }, topProducts: [{ ...product, units: 3, orders: 2, revenueCents: 7500, profitCents: 6750 }], series: Array.from({ length: 7 }, (_, i) => ({ date: `2026-10-${13 + i}`, orders: i === 6 ? 2 : 0, revenueCents: i === 6 ? 7500 : 0, profitCents: i === 6 ? 6750 : 0 })) };
+const data = { period: '7d', currency: 'USD', timezone: 'America/New_York', start: '2026-10-13', end: '2026-10-19', chartStart: '2026-10-13', generatedAt: '2026-10-19T20:00:00Z', product: null, totals: { orders: 2, units: 3, revenueCents: 7500, costCents: 600, feeCents: 150, expenseCents: 1250, expenseCount: 1, saleProfitCents: 6750, profitCents: 5500, averageOrderCents: 3750 }, topProducts: [{ ...product, units: 3, orders: 2, revenueCents: 7500, profitCents: 6750 }], series: Array.from({ length: 7 }, (_, i) => ({ date: `2026-10-${13 + i}`, orders: i === 6 ? 2 : 0, revenueCents: i === 6 ? 7500 : 0, profitCents: i === 6 ? 6750 : 0 })) };
 function interaction(values = {}, { level = 'owner', command = 'confirm', server = guild } = {}) {
   const roles = level === 'admin' ? ['222222222222222222'] : level === 'staff' ? ['333333333333333333'] : [];
   const i = { id: '444444444444444444', guildId: server, guild: { name: 'QT Test Server' }, user: { id: level === 'owner' ? guild : '999999999999999999' }, member: { roles }, commandName: command, options: {}, replies: [], choices: null };
@@ -105,6 +105,40 @@ test('/sales and /products stay within Discord embed limits; void only changes t
 });
 test('missing sales deployment gives actionable backend version requirement', async () => {
   const saved = globalThis.fetch; globalThis.fetch = async () => new Response('<html>Not found</html>', { status: 404 });
-  try { await assert.rejects(() => api(`/v1/admin/sales/guilds/${guild}/products`), e => e.code === 'QT-BACKEND-UPDATE' && e.message.includes('0.9.0')); }
+  try { await assert.rejects(() => api(`/v1/admin/sales/guilds/${guild}/products`), e => e.code === 'QT-BACKEND-UPDATE' && e.message.includes('updated Quilted Tweaks backend')); }
   finally { globalThis.fetch = saved; }
+});
+
+test('expense commands are registered privately with required amount/description and optional product', () => {
+  for(const name of ['expense','expenses','voidexpense']) {
+    const c=commands.find(c=>c.name===name);assert.ok(c);assert.ok(SALES_ADMIN_COMMANDS.includes(name));assert.equal(publicCommands.some(x=>x.name===name),false);
+  }
+  const c=commands.find(c=>c.name==='expense');assert.equal(c.options[0].name,'amount');assert.equal(c.options[0].min_value,0.01);assert.equal(c.options[0].required,true);assert.equal(c.options[1].name,'description');assert.equal(c.options[1].required,true);
+  assert.equal(c.options.find(x=>x.name==='product').autocomplete,true);
+});
+const expenseRecord={id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',description:'Hosting @everyone **bill**',category:'Hosting',amountCents:2001,productName:null,spentAt:'2026-10-19T23:00:00Z'};
+test('/expense records an already-paid purchase with retry protection and no money movement',async()=>{
+  const calls=[];const h=createSalesHandlers({request:async(p,o)=>{calls.push([p,o]);return {expense:expenseRecord,duplicate:calls.length>1};}});
+  const i=interaction({amount:20.01,description:'Railway',category:'Hosting',spent_on:'2026-10-19',reference:'receipt',product:pid},{command:'expense'});await h.expense(i);
+  assert.deepEqual(JSON.parse(calls[0][1].body),{amount:20.01,description:'Railway',category:'Hosting',spentOn:'2026-10-19',paymentReference:'receipt',productId:pid,interactionId:i.id});
+  assert.equal(routeApiPath(calls[0][0]),`/v1/qt-admin/sales/guilds/${guild}/expenses`);assert.equal(calls[0][1].actor,i.user.id);
+  assert.deepEqual(i.replies[0].allowedMentions,{parse:[]});assert.ok(!i.replies[0].embeds[0].data.description.includes('@everyone'));assert.match(i.replies[0].embeds[0].data.description,/does not send money/);
+  await h.expense(i);assert.equal(i.replies[1].embeds[0].data.title,'Expense already recorded');
+  assert.ok(calls.every(([p])=>p.endsWith('/expenses')));
+});
+test('/expenses lists safe bounded purchase records and /voidexpense sends an audited correction',async()=>{
+  const calls=[];const h=createSalesHandlers({request:async(p,o)=>{calls.push([p,o]);return p.endsWith('/void')?{expense:expenseRecord,alreadyVoided:false}:{expenses:Array.from({length:20},()=>({...expenseRecord,description:'*'.repeat(240)})),timezone:'America/New_York'};}});
+  const i=interaction({limit:20,voided:true,product:pid},{command:'expenses'});await h.expenses(i);assert.match(calls[0][0],/voided=true&productId=/);assert.ok(i.replies[0].embeds[0].data.description.length<4096);
+  const v=interaction({expense_id:expenseRecord.id,reason:'Duplicate receipt'},{command:'voidexpense'});await h.voidexpense(v);
+  assert.ok(calls[1][0].endsWith(`/expenses/${expenseRecord.id}/void`));assert.deepEqual(JSON.parse(calls[1][1].body),{reason:'Duplicate receipt'});assert.match(v.replies[0].embeds[0].data.description,/audit record is preserved/);
+});
+test('expense-only loss chart renders clearly and never discloses purchase descriptions or receipts',async()=>{
+  const report={...data,totals:{...data.totals,orders:0,units:0,revenueCents:0,costCents:0,feeCents:0,expenseCents:2001,expenseCount:1,profitCents:-2001},series:data.series.map((d,i)=>({...d,orders:0,revenueCents:0,expenseCents:i===6?2001:0,profitCents:i===6?-2001:0})),topProducts:[],expenses:[{description:'PRIVATE PURCHASE',paymentReference:'PRIVATE RECEIPT'}]};
+  const svg=renderDashboardSvg(report);assert.match(svg,/NET PROFIT/);assert.match(svg,/BUSINESS EXPENSES/);assert.ok(!svg.includes('No sales recorded'));assert.ok(!svg.includes('PRIVATE PURCHASE'));assert.ok(!svg.includes('PRIVATE RECEIPT'));assert.ok(!svg.includes('NaN'));
+  assert.ok((await renderDashboardPng(report)).length>30000);
+});
+test('old backend dashboard cannot silently omit expenses from net profit',async()=>{
+  const old={...data,totals:{...data.totals}};delete old.totals.expenseCents;
+  const h=createSalesHandlers({request:async()=>old,render:async()=>{throw new Error('must not render incomplete report');}});
+  await assert.rejects(()=>h.dashboard(interaction({},{command:'dashboard'})),/updated backend with expense tracking/);
 });

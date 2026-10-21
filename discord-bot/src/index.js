@@ -5,6 +5,7 @@ import { api } from "./api.js";
 import { canUse, accessLevel } from "./access.js";
 import { createSalesHandlers, SALES_ADMIN_COMMANDS } from './sales.js';
 import { createWebsiteKeyHandlers } from './websiteKeys.js';
+import { createKeyInfoHandlers } from "./keyInfo.js";
 import { WEBSITE_KEY_COMMAND_NAMES } from './websiteKeyCommands.js';
 import { COLORS, discordTime, durationText, embed, licenseExpiryText, licenseFields, licenseLabel, truncate } from "./format.js";
 import {
@@ -31,6 +32,8 @@ const ADMIN_COMMANDS = new Set([
   "setupwelcome", "testwelcome", "setuptickets"
 ]);
 const OWNER_ONLY_COMMANDS = new Set(["deleteallkeys", "setversion", "forceupdate", "sendthismessage", "publishupdate", "paymentreminder"]);
+
+const keyInfoHandlers = createKeyInfoHandlers();
 
 const rest = new REST({ version: "10" }).setToken(config.token);
 await Promise.all([
@@ -110,35 +113,7 @@ async function handleGenKey(interaction) {
 }
 
 async function handleKeyInfo(interaction) {
-  const reference = interaction.options.getString("reference", true);
-  const result = await api("/v1/admin/keyinfo", {
-    method: "POST",
-    actor: interaction.user.id,
-    body: JSON.stringify({ reference })
-  });
-
-  if (result.licenses.length === 1) {
-    return interaction.editReply({ embeds: [embed(
-      result.matchType === "device" ? "Quilted Tweaks key found by Device ID" : "Quilted Tweaks key information",
-      licenseFields(result.licenses[0], { showRecoveryNote: true }),
-      COLORS.blue
-    )] });
-  }
-
-  const fields = result.licenses.slice(0, 10).map((license, index) => ({
-    name: `License ${index + 1}`,
-    value: truncate([
-      license.fullKey ? `Key: \`${license.fullKey}\`` : `Key: \`${license.keyPrefix}…\` (legacy; use /reissuekey)`,
-      `ID: \`${license.id}\``,
-      `Plan: ${license.plan} • Status: ${license.isUsable ? "Active" : license.status}`,
-      `Owner: ${license.discordUserId ? `<@${license.discordUserId}>` : "Unlinked"}`
-    ].join("\n"), 1024)
-  }));
-  return interaction.editReply({ embeds: [embed(
-    `Device ID is linked to ${result.licenses.length} licenses`,
-    fields,
-    COLORS.yellow
-  )] });
+  return keyInfoHandlers.keyinfo(interaction);
 }
 
 async function handleReissueKey(interaction) {
@@ -435,9 +410,9 @@ async function handleAuditLog(interaction) {
 async function handleHelp(interaction) {
   return interaction.editReply({ embeds: [embed("Quilted Tweaks Helper commands", [
     { name: "Everyone (bot DMs)", value: "`/whatsmykey` privately shows all linked keys. `/whatsmytrialkey` recovers the exact latest timed key linked to your account." },
-    { name: "Staff", value: "`/genkey` `/keyinfo` `/finduser` `/listkeys` `/resetdevices` `/devices` `/versionstatus` `/systemstatus`" },
+    { name: "Staff", value: "`/genkey` `/keyinfo user:@customer` `/finduser` `/listkeys` `/resetdevices` `/devices` `/versionstatus` `/systemstatus`" },
     { name: "Admin", value: "`/reissuekey` `/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog` `/setupwelcome` `/testwelcome` `/setuptickets`" },
-    { name: "Sales", value: "Staff: `/confirm` `/products`\nAdmin/owner: `/addproduct` `/editproduct` `/dashboard` `/sales` `/voidsale`\nAll sales replies are private. Amounts are USD." },
+    { name: "Sales", value: "Staff: `/confirm` `/products`\nAdmin/owner: `/addproduct` `/editproduct` `/dashboard` `/sales` `/voidsale` `/expense` `/expenses` `/voidexpense`\nAll sales replies are private. Amounts are USD." },
     { name: "Website key stock (admin/owner)", value: "`/genwebsitekeys` generates 1–1000 one-PC keys without a Discord customer and sends a private TXT. `/websitebatches` lists batches; `/exportwebsitekeys` recovers a batch." },
     { name: "Owner only", value: "`/deleteallkeys` `/setversion` `/forceupdate` `/sendthismessage` `/publishupdate` `/paymentreminder`" },
     { name: "Your access", value: accessLevel(interaction) },
@@ -482,6 +457,9 @@ const handlers = {
 
 client.on("interactionCreate", async interaction => {
   try {
+    if (interaction.isButton() && interaction.customId.startsWith("qt_keyinfo:")) {
+      return await keyInfoHandlers.button(interaction);
+    }
     if (interaction.isAutocomplete()) return await salesHandlers.autocomplete(interaction);
     if (interaction.isButton() && interaction.customId.startsWith("mi_ticket_")) {
       await handleTicketButton(interaction);
@@ -533,7 +511,7 @@ client.on("messageCreate", message => {
 });
 
 client.once("ready", async () => {
-  console.log(`Quilted Tweaks Helper 0.10.0 logged in as ${client.user.tag}`);
+  console.log(`Quilted Tweaks Helper 0.12.1 logged in as ${client.user.tag}`);
   console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
   client.user.setPresence({ activities: [{ name: "Quilted Tweaks Support" }], status: "online" });
   try {

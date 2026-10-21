@@ -4,10 +4,10 @@ import { renderDashboardPng } from '../src/salesDashboard.js';
 
 const products = [
   { id: 'demo-1', name: 'QT Premium Utility', price: 2500, cost: 200 },
-  { id: 'demo-2', name: 'Full PC Optimization', price: 3500, cost: 500 },
+  { id: 'demo-2', name: 'Manual Optimization', price: 2500, cost: 500 },
   { id: 'demo-3', name: 'Optimization + Utility Bundle', price: 5000, cost: 700 }
 ].map(p => ({ ...p, orders: 0, units: 0, revenueCents: 0, profitCents: 0 }));
-const totals = { orders: 0, units: 0, revenueCents: 0, costCents: 0, feeCents: 0, profitCents: 0, averageOrderCents: 0 };
+const totals = { orders: 0, units: 0, revenueCents: 0, costCents: 0, feeCents: 0, expenseCents: 0, expenseCount: 0, profitCents: 0, averageOrderCents: 0 };
 const series = Array.from({ length: 30 }, (_, i) => {
   const date = new Date(Date.parse('2026-09-20T00:00:00Z') + i * 86400000).toISOString().slice(0, 10);
   const day = { date, orders: i % 6 === 0 ? 0 : (i * 7 % 4) + 1, revenueCents: 0, profitCents: 0 };
@@ -18,6 +18,9 @@ const series = Array.from({ length: 30 }, (_, i) => {
     p.orders++; p.units += units; p.revenueCents += revenue; p.profitCents += profit;
     totals.orders++; totals.units += units; totals.revenueCents += revenue; totals.costCents += cost; totals.feeCents += fee; totals.profitCents += profit;
   }
+  day.expenseCents = i % 7 === 0 ? 2000 : 0;
+  day.profitCents -= day.expenseCents; totals.profitCents -= day.expenseCents;
+  totals.expenseCents += day.expenseCents; totals.expenseCount += day.expenseCents ? 1 : 0;
   return day;
 });
 totals.averageOrderCents = Math.round(totals.revenueCents / totals.orders);

@@ -26,7 +26,21 @@ export const salesCommands = [
     .addStringOption(o => o.setName('reference').setDescription('Payment transaction/order reference; prevents duplicate entries').setMaxLength(120))
     .addStringOption(o => o.setName('sold_on').setDescription('Optional past date YYYY-MM-DD; otherwise records now').setMinLength(10).setMaxLength(10))
     .addStringOption(o => o.setName('note').setDescription('Private sale note').setMaxLength(500)),
-  new SlashCommandBuilder().setName('dashboard').setDescription('Admin: generate your private sales and recorded-profit dashboard image')
+  new SlashCommandBuilder().setName('expense').setDescription('Admin: record a purchase or expense to subtract from profit')
+    .addNumberOption(o => amountOption(o, 'amount', 'Total already-paid expense in USD', true).setMinValue(0.01))
+    .addStringOption(o => o.setName('description').setDescription('What you purchased, for example Railway hosting').setRequired(true).setMaxLength(240))
+    .addStringOption(o => o.setName('category').setDescription('Optional category, for example Hosting, Advertising, or Equipment').setMaxLength(40))
+    .addStringOption(o => o.setName('spent_on').setDescription('Optional past date YYYY-MM-DD; otherwise records now').setMinLength(10).setMaxLength(10))
+    .addStringOption(o => o.setName('reference').setDescription('Receipt/transaction reference; prevents duplicate expense entries').setMaxLength(120))
+    .addStringOption(o => productOption(o).setDescription('Optional product; leave blank for a general business expense')),
+  new SlashCommandBuilder().setName('expenses').setDescription('Admin: privately review recorded expenses and IDs')
+    .addIntegerOption(o => o.setName('limit').setDescription('How many entries to show; defaults to 10').setMinValue(1).setMaxValue(20))
+    .addBooleanOption(o => o.setName('voided').setDescription('Also show voided entries'))
+    .addStringOption(o => productOption(o).setDescription('Optional product filter; excludes general business expenses')),
+  new SlashCommandBuilder().setName('voidexpense').setDescription('Admin: exclude a mistaken expense while keeping its audit record')
+    .addStringOption(o => o.setName('expense_id').setDescription('Full expense ID from /expense or /expenses').setRequired(true).setMaxLength(36))
+    .addStringOption(o => o.setName('reason').setDescription('Why the expense is incorrect').setRequired(true).setMaxLength(300)),
+  new SlashCommandBuilder().setName('dashboard').setDescription('Admin: generate a private sales, expenses and net-profit dashboard')
     .addStringOption(o => o.setName('period').setDescription('Reporting window; defaults to 30 days').addChoices(
       { name: 'Last 7 days', value: '7d' }, { name: 'Last 30 days', value: '30d' },
       { name: 'Last 90 days', value: '90d' }, { name: 'All time', value: 'all' }))

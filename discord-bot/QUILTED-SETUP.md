@@ -17,7 +17,8 @@ No new environment variable is required. QUILTED_MINIMUM_APP_VERSION / QUILTED_M
 
 - /genkey user:@customer plan:Lifetime — creates a one-PC Quilted Tweaks key and attempts private DM delivery.
 - /genkey user:@customer plan:Trial trial_days:7 — timed access starts on first successful activation. The optional devices field accepts only 1.
-- /keyinfo reference:KEY_OR_PREFIX_OR_UUID_OR_DEVICE_ID — shows the key and binding details.
+- /keyinfo user:@customer — privately shows all QT keys linked to that Discord account, with page navigation.
+- /keyinfo reference:KEY_OR_PREFIX_OR_UUID_OR_DEVICE_ID — keeps the existing key and binding lookup. Discord IDs and mentions are also accepted.
 - /reissuekey reference:KEY_OR_UUID confirmation:REISSUE KEY — replaces the key, retains its PC binding and invalidates old sessions.
 - /finduser user:@customer and /listkeys — list Quilted licenses.
 - /resetdevices key license:KEY_OR_UUID or /resetdevices user user:@customer — clears device bindings without restarting trial timers.
