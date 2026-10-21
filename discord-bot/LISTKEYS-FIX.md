@@ -1,6 +1,6 @@
 # Helper v0.12.2 — list command fix
 
-Deploy this bot update to the existing Helper bot service. Extract the ZIP, replace the matching bot repository files with the contents of discord-bot/, commit/push and deploy. Keep Railway variables and the database. No backend or EXE update is needed for this fix. Backend v0.12.1 remains the current backend for Discord-user /keyinfo.
+Deploy this bot update to the existing Helper bot service. Extract the ZIP, replace the matching bot repository files with the top-level contents of this ZIP, commit/push and deploy. Keep Railway variables and the database. No backend or EXE update is needed for this fix. Backend v0.12.1 remains the current backend for Discord-user /keyinfo.
 
 /listkeys now gives each key its own bounded field instead of placing the entire list in one 1,024-character field. All requested results (up to 25) are retained, including owner, prefix, plan, status, device count and license ID. Empty results and status/plan filters remain supported. Replies stay private to staff and suppress customer pings.
 

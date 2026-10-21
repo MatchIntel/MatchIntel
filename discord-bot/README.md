@@ -1,3 +1,7 @@
+# Deployment layout update
+
+Read [START-HERE.md](START-HERE.md) first. This ZIP contains the bot files directly at its top level. Upload them to the Root Directory of the existing Railway bot service. The required startup version is 0.12.2.
+
 ## List command fix — v0.12.2
 
 Fixes `/listkeys` exceeding Discord's 1,024-character field limit; all requested results up to 25 now display. Also corrects long user/audit list layouts and updates readiness/private-reply APIs. Deploy this bot only; keep backend v0.12.1, your variables and EXE. See [LISTKEYS-FIX.md](LISTKEYS-FIX.md).
