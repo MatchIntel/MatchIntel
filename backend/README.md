@@ -1,3 +1,7 @@
+## Sales and expenses update — v0.11.0
+
+Adds `/expense`, `/expenses`, `/voidexpense` and net-profit reporting. Deploy the backend first, then the bot. Existing variables and database are retained. See [SALES-SETUP.md](SALES-SETUP.md) for commands and upgrade steps.
+
 # Quilted Tweaks backend 0.10.0
 
 Adds **unlinked one-PC website key batches**. Read [WEBSITE-KEYS-SETUP.md](WEBSITE-KEYS-SETUP.md). Admins can use `/genwebsitekeys count:100 plan:Lifetime`, download import-ready TXT stock, and recover batches with `/websitebatches` and `/exportwebsitekeys`. Existing Discord-linked `/genkey` and all sales/dashboard features remain supported.

@@ -36,13 +36,14 @@ function saleJson(row) {
   const price = asNumber(row.unit_price_cents), cost = asNumber(row.unit_cost_cents), quantity = row.quantity, fee = asNumber(row.fee_cents);
   return { id: row.id, productId: row.product_id, productName: row.product_name, unitPriceCents: price, unitCostCents: cost, quantity, feeCents: fee, revenueCents: price * quantity, costCents: cost * quantity, profitCents: (price - cost) * quantity - fee, currency: row.currency, customerId: row.customer_id, paymentReference: row.payment_reference, note: row.note, soldAt: row.sold_at, recordedBy: row.recorded_by, voidedAt: row.voided_at, voidReason: row.void_reason };
 }
+const expenseJson = row => ({ id: row.id, description: row.description, category: row.category, amountCents: asNumber(row.amount_cents), currency: row.currency, productId: row.product_id, productName: row.product_name, paymentReference: row.payment_reference, spentAt: row.spent_at, recordedBy: row.recorded_by, voidedAt: row.voided_at, voidReason: row.void_reason });
 function dateInZone(date, timezone) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date).map(p => [p.type, p.value]));
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 const shiftDate = (date, delta) => new Date(Date.parse(date + 'T00:00:00Z') + delta * 86400000).toISOString().slice(0, 10);
 function saleDate(value, today) {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value || value < '2000-01-01' || value > today) fail(400, 'QT-SALES-DATE', 'Use an existing date from 2000 onward in YYYY-MM-DD format; future sales are not allowed.');
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value || value < '2000-01-01' || value > today) fail(400, 'QT-SALES-DATE', 'Use an existing date from 2000 onward in YYYY-MM-DD format; future entries are not allowed.');
   return value;
 }
 
@@ -146,6 +147,57 @@ export function createSalesService({ execute = query, transaction = tx, now = ()
       const rows = await execute('SELECT * FROM qt_sales WHERE guild_id=$1 AND ($2::boolean OR voided_at IS NULL) ORDER BY sold_at DESC,created_at DESC,id LIMIT $3', [guild, includeVoided, limit]);
       return { sales: rows.rows.map(saleJson), currency: 'USD' };
     },
+    async addExpense(guild, actor, body) {
+      scope(guild, actor);
+      const interactionId = discordId(body.interactionId, 'Interaction');
+      const normalized = {
+        amount: moneyToCents(body.amount, 'Expense amount'),
+        description: text(body.description, 'Description', 240),
+        category: text(body.category ?? 'Other', 'Category', 40),
+        productId: body.productId == null ? null : String(body.productId).toLowerCase(),
+        paymentReference: body.paymentReference == null ? null : text(body.paymentReference, 'Payment reference', 120),
+        spentOn: body.spentOn == null ? null : saleDate(body.spentOn, dateInZone(now(), timezone))
+      };
+      if (normalized.amount < 1) fail(400, 'QT-EXPENSE-AMOUNT', 'Expense amount must be at least $0.01.');
+      if (normalized.productId != null && !uuid(normalized.productId)) fail(400, 'QT-PRODUCT-ID', 'Choose a product from autocomplete or leave it blank for a general expense.');
+      const hash = createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+      try {
+        return await transaction(async c => {
+          await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [guild + ':expense:' + interactionId]);
+          const old = (await c.query('SELECT * FROM qt_sales_expenses WHERE guild_id=$1 AND interaction_id=$2', [guild, interactionId])).rows[0];
+          if (old) {
+            if (old.request_hash !== hash || old.recorded_by !== actor) fail(409, 'QT-EXPENSE-RETRY', 'This interaction already recorded different expense details.');
+            return { expense: expenseJson(old), duplicate: true };
+          }
+          const p = normalized.productId ? await product(c, guild, normalized.productId, true) : null;
+          const row = (await c.query(`INSERT INTO qt_sales_expenses(id,guild_id,description,category,amount_cents,product_id,product_name,payment_reference,interaction_id,request_hash,recorded_by,spent_at)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $12::text IS NULL THEN $13::timestamptz ELSE ($12::date+TIME '12:00') AT TIME ZONE $14 END) RETURNING *`,
+          [randomUuid(), guild, normalized.description, normalized.category, normalized.amount, p?.id ?? null, p?.name ?? null, normalized.paymentReference, interactionId, hash, actor, normalized.spentOn, now().toISOString(), timezone])).rows[0];
+          await audit(c, 'expense_recorded', actor, row.id, { guildId: guild, amountCents: normalized.amount, productId: p?.id ?? null, category: normalized.category });
+          return { expense: expenseJson(row), duplicate: false };
+        });
+      } catch (e) { if (e.code === '23505') fail(409, 'QT-EXPENSE-DUPLICATE', 'That expense reference is already recorded. Check /expenses before adding it again.'); throw e; }
+    },
+    async expenses(guild, actor, { limit = 10, includeVoided = false, productId = null } = {}) {
+      scope(guild, actor);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 20 || typeof includeVoided !== 'boolean') fail(400, 'QT-SALES-FILTER', 'Use a limit from 1 to 20.');
+      if (productId != null) await product({ query: execute }, guild, productId);
+      const result = await execute('SELECT * FROM qt_sales_expenses WHERE guild_id=$1 AND ($2::boolean OR voided_at IS NULL) AND ($3::uuid IS NULL OR product_id=$3) ORDER BY spent_at DESC,created_at DESC,id LIMIT $4', [guild, includeVoided, productId, limit]);
+      return { expenses: result.rows.map(expenseJson), currency: 'USD', timezone };
+    },
+    async voidExpense(guild, actor, id, reason) {
+      scope(guild, actor);
+      if (!uuid(id)) fail(400, 'QT-EXPENSE-ID', 'Use a full expense ID from /expense or /expenses.');
+      reason = text(reason, 'Void reason', 300);
+      return transaction(async c => {
+        const old = (await c.query('SELECT * FROM qt_sales_expenses WHERE guild_id=$1 AND id=$2 FOR UPDATE', [guild, id])).rows[0];
+        if (!old) fail(404, 'QT-EXPENSE-NOT-FOUND', 'Expense not found in this server.');
+        if (old.voided_at) return { expense: expenseJson(old), alreadyVoided: true };
+        const row = (await c.query('UPDATE qt_sales_expenses SET voided_at=NOW(),voided_by=$3,void_reason=$4 WHERE guild_id=$1 AND id=$2 RETURNING *', [guild, id, actor, reason])).rows[0];
+        await audit(c, 'expense_voided', actor, id, { guildId: guild, reason });
+        return { expense: expenseJson(row), alreadyVoided: false };
+      });
+    },
     async dashboard(guild, actor, { period = '30d', productId = null } = {}) {
       scope(guild, actor);
       if (!['7d', '30d', '90d', 'all'].includes(period)) fail(400, 'QT-SALES-PERIOD', 'Choose 7d, 30d, 90d, or all.');
@@ -158,14 +210,20 @@ export function createSalesService({ execute = query, transaction = tx, now = ()
         const args = [guild, p?.id ?? null, period === 'all' ? null : start, end, timezone];
         const where = `guild_id=$1 AND voided_at IS NULL AND ($2::uuid IS NULL OR product_id=$2) AND ($3::date IS NULL OR sold_at>=($3::date::timestamp AT TIME ZONE $5)) AND sold_at<($4::date::timestamp AT TIME ZONE $5)`;
         const totals = (await c.query(`SELECT count(*) AS orders,COALESCE(sum(quantity),0) AS units,COALESCE(sum(unit_price_cents*quantity),0) AS revenue,COALESCE(sum(unit_cost_cents*quantity),0) AS costs,COALESCE(sum(fee_cents),0) AS fees FROM qt_sales WHERE ${where}`, args)).rows[0];
+        const expenseWhere = `guild_id=$1 AND voided_at IS NULL AND ($2::uuid IS NULL OR product_id=$2) AND ($3::date IS NULL OR spent_at>=($3::date::timestamp AT TIME ZONE $5)) AND spent_at<($4::date::timestamp AT TIME ZONE $5)`;
+        const expenseTotals = (await c.query(`SELECT count(*) AS count,COALESCE(sum(amount_cents),0) AS amount FROM qt_sales_expenses WHERE ${expenseWhere}`, args)).rows[0];
         const best = (await c.query(`SELECT product_id,count(*) AS orders,sum(quantity) AS units,sum(unit_price_cents*quantity) AS revenue,sum((unit_price_cents-unit_cost_cents)*quantity-fee_cents) AS profit FROM qt_sales WHERE ${where} GROUP BY product_id ORDER BY revenue DESC,product_id LIMIT 5`, args)).rows;
         for (const row of best) row.name = (await c.query('SELECT name FROM qt_sales_products WHERE id=$1 AND guild_id=$2', [row.product_id, guild])).rows[0].name;
         const chartRows = (await c.query(`SELECT to_char(sold_at AT TIME ZONE $5,'YYYY-MM-DD') AS day,count(*) AS orders,sum(unit_price_cents*quantity) AS revenue,sum((unit_price_cents-unit_cost_cents)*quantity-fee_cents) AS profit FROM qt_sales WHERE ${where} AND sold_at>=($6::date::timestamp AT TIME ZONE $5) GROUP BY day ORDER BY day`, [...args, start])).rows;
         const byDay = new Map(chartRows.map(row => [row.day, row]));
-        const series = Array.from({ length: days }, (_, i) => { const date = shiftDate(start, i), row = byDay.get(date); return { date, orders: asNumber(row?.orders), revenueCents: asNumber(row?.revenue), profitCents: asNumber(row?.profit) }; });
+        const expenseDays = (await c.query(`SELECT to_char(spent_at AT TIME ZONE $5,'YYYY-MM-DD') AS day,sum(amount_cents) AS amount FROM qt_sales_expenses WHERE ${expenseWhere} AND spent_at>=($6::date::timestamp AT TIME ZONE $5) GROUP BY day ORDER BY day`, [...args, start])).rows;
+        const expensesByDay = new Map(expenseDays.map(row => [row.day, asNumber(row.amount)]));
+        const series = Array.from({ length: days }, (_, i) => { const date = shiftDate(start, i), row = byDay.get(date), expense = expensesByDay.get(date) ?? 0; return { date, orders: asNumber(row?.orders), revenueCents: asNumber(row?.revenue), expenseCents: expense, profitCents: asNumber(row?.profit) - expense }; });
         const revenue = asNumber(totals.revenue), costs = asNumber(totals.costs), fees = asNumber(totals.fees), orders = asNumber(totals.orders);
+        const expenses = asNumber(expenseTotals.amount);
         return { currency: 'USD', timezone, period, start: period === 'all' ? null : start, end: today, chartStart: start, generatedAt: now().toISOString(), product: p ? productJson(p) : null,
-          totals: { orders, units: asNumber(totals.units), revenueCents: revenue, costCents: costs, feeCents: fees, profitCents: revenue - costs - fees, averageOrderCents: orders ? Math.round(revenue / orders) : 0 },
+          expenseScope: p ? 'Product-linked expenses only; general expenses excluded.' : 'All recorded business expenses included.',
+          totals: { orders, units: asNumber(totals.units), revenueCents: revenue, costCents: costs, feeCents: fees, expenseCents: expenses, expenseCount: asNumber(expenseTotals.count), saleProfitCents: revenue - costs - fees, profitCents: revenue - costs - fees - expenses, averageOrderCents: orders ? Math.round(revenue / orders) : 0 },
           topProducts: best.map(row => ({ id: row.product_id, name: row.name, orders: asNumber(row.orders), units: asNumber(row.units), revenueCents: asNumber(row.revenue), profitCents: asNumber(row.profit) })), series };
       });
     }
@@ -186,6 +244,9 @@ export function createSalesRouter({ service = createSalesService() } = {}) {
   router.post('/confirm', handle((req, guild, actor) => service.confirm(guild, actor, req.body || {})));
   router.get('/records', handle((req, guild, actor) => service.sales(guild, actor, { limit: Number(req.query.limit ?? 10), includeVoided: req.query.voided === 'true' })));
   router.post('/records/:id/void', handle((req, guild, actor) => service.voidSale(guild, actor, req.params.id, req.body?.reason)));
+  router.post('/expenses', handle((req, guild, actor) => service.addExpense(guild, actor, req.body || {})));
+  router.get('/expenses', handle((req, guild, actor) => service.expenses(guild, actor, { limit: Number(req.query.limit ?? 10), includeVoided: req.query.voided === 'true', productId: req.query.productId ?? null })));
+  router.post('/expenses/:id/void', handle((req, guild, actor) => service.voidExpense(guild, actor, req.params.id, req.body?.reason)));
   router.get('/dashboard', handle((req, guild, actor) => service.dashboard(guild, actor, { period: req.query.period ?? '30d', productId: req.query.productId ?? null })));
   return router;
 }

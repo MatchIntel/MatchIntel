@@ -11,7 +11,7 @@ process.env.DEVICE_HASH_PEPPER = 'fixture-sales-pepper';
 const { createSalesService, createSalesRouter, moneyToCents } = await import('../src/sales.js');
 const { createQuiltedAdminRouter } = await import('../src/quiltedAdmin.js');
 const db = new PGlite();
-for (const name of ['001_init.sql', '009_qt_optimizer_licenses.sql', '010_qt_sales_ledger.sql']) await db.exec(await fs.readFile(new URL('../migrations/' + name, import.meta.url), 'utf8'));
+for (const name of ['001_init.sql', '009_qt_optimizer_licenses.sql', '010_qt_sales_ledger.sql', '012_qt_expenses.sql']) await db.exec(await fs.readFile(new URL('../migrations/' + name, import.meta.url), 'utf8'));
 const adapt = c => ({ query: async (sql, args) => { const r = await c.query(sql, args); return { rows: r.rows, rowCount: r.rows.length }; } });
 const execute = adapt(db).query, transaction = fn => db.transaction(c => fn(adapt(c)));
 let clock = new Date('2026-10-20T01:30:00Z'); // Oct 19 in New York.
@@ -79,7 +79,7 @@ test('product edits/archive do not rewrite history; archive filters and reopen w
 test('dashboard totals, trends, product filters and timezone use consistent sale snapshots', async () => {
   const result = await call(`/fixture/${guild}/dashboard?period=30d`);
   assert.equal(result.timezone, 'America/New_York'); assert.equal(result.end, '2026-10-19'); assert.equal(result.start, '2026-09-20');
-  assert.deepEqual(result.totals, { orders: 2, units: 3, revenueCents: 7001, costCents: 601, feeCents: 181, profitCents: 6219, averageOrderCents: 3501 });
+  assert.deepEqual(result.totals, { orders: 2, units: 3, revenueCents: 7001, costCents: 601, feeCents: 181, expenseCents: 0, expenseCount: 0, saleProfitCents: 6219, profitCents: 6219, averageOrderCents: 3501 });
   assert.equal(result.series.length, 30); assert.equal(result.series.at(-1).date, '2026-10-19'); assert.equal(result.series.at(-1).revenueCents, 5000);
   assert.equal(result.series.reduce((s, d) => s + d.revenueCents, 0), result.totals.revenueCents);
   assert.equal(result.topProducts[0].name, 'QT Utility Updated');
