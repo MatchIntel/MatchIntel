@@ -14,7 +14,7 @@ const input=(key,d=device)=>({licenseKey:key,deviceId:d,deviceName:'Test PC',app
 const db=new PGlite();
 for(const file of ['001_init.sql','009_qt_optimizer_licenses.sql'])await db.exec(await fs.readFile(new URL('../migrations/'+file,import.meta.url),'utf8'));
 const adapt=c=>({query:async(s,a)=>{const r=await c.query(s,a);return {rows:r.rows,rowCount:r.rows.length};}});
-const svc=createQtService({execute:adapt(db).query,transaction:fn=>db.transaction(c=>fn(adapt(c)))});
+const svc=createQtService({discordRequired:false,execute:adapt(db).query,transaction:fn=>db.transaction(c=>fn(adapt(c)))});
 const gen=(plan='lifetime')=>svc.generate({plan,trialDays:3,discordUserId:owner},actor);
 const rejects=(fn,code)=>assert.rejects(fn,e=>e.code===code);
 test('QT product isolation, strict input, access token binding and encryption',async()=>{

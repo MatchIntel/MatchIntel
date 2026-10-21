@@ -7,6 +7,7 @@ import { query, tx } from "./db.js";
 import { config } from "./config.js";
 import { requireAdmin } from "./auth.js";
 import { encryptLicenseKey, decryptLicenseKey, hashDevice, randomToken, randomUuid, sha256, compareVersions } from "./security.js";
+import { createDiscordLink, createDiscordRouter, hasDiscordProof } from './qtDiscord.js';
 
 export const QT_PRODUCT = "qt-optimizer";
 const keyPattern = /^QT-(?:[A-F0-9]{4}-){7}[A-F0-9]{4}$/;
@@ -24,13 +25,18 @@ export function qtPublicLicense(row, reveal=false) {
  return {id:row.id,product:QT_PRODUCT,keyPrefix:row.key_prefix,plan:row.plan,status:row.status,
   activatedAt:row.activated_at,expiresAt:row.expires_at,activationDurationSeconds:Number(row.duration_seconds)||null,
   pendingActivation:row.plan==="trial"&&!row.activated_at,maxDevices:1,deviceBound:Boolean(row.device_hash),
-  deviceCount:row.device_hash?1:0,isFreeTrial:false,isUsable:row.status==="active"&&(!row.expires_at||new Date(row.expires_at)>new Date()),features:["optimizer"],
+  deviceCount:row.device_hash?1:0,isFreeTrial:false,isUsable:row.status==="active"&&(!row.expires_at||new Date(row.expires_at)>new Date()),discordLinked:hasDiscordProof(row,row.device_hash),features:["optimizer"],
   ...(reveal?{fullKey:decryptLicenseKey(row.key_ciphertext),fullKeyAvailable:Boolean(decryptLicenseKey(row.key_ciphertext)),deviceHash:row.device_hash,licenseKey:decryptLicenseKey(row.key_ciphertext),discordUserId:row.discord_user_id,
    discordUsername:row.discord_username,source:row.issuance_source||'discord',websiteBatchId:row.website_batch_id||null,deviceName:row.device_name,boundAt:row.bound_at,lastSeenAt:row.last_seen_at,
    note:row.note,revokedReason:row.revoked_reason}: {})};
 }
-export function createQtService({transaction=tx,execute=query}={}) {
+export function createQtService({transaction=tx,execute=query,discordRequired=true,discordEnv=process.env,discordFetch=fetch}={}) {
  const settings=createQtSettings({execute,transaction});
+ const policy=async()=>{
+  const state=await settings.get();
+  if(!discordRequired||compareVersions(state.version.requiredVersion,'3.0.0')>=0)return state;
+  return {...state,version:{...state.version,requiredVersion:'3.0.0',minimumVersion:'3.0.0',latestVersion:compareVersions(state.version.latestVersion,'3.0.0')<0?'3.0.0':state.version.latestVersion,message:'Install QT Premium Utility 3.0.0 or newer to verify your Discord account.'}};
+ };
  const audit=async(client,action,actor,id,details={})=>client.query(
   "INSERT INTO audit_logs(id,action,actor,target,details) VALUES($1,$2,$3,$4,$5)",
   [randomUuid(),"qt."+action,actor,id,JSON.stringify(details)]);
@@ -46,10 +52,11 @@ export function createQtService({transaction=tx,execute=query}={}) {
  };
  const usable=row=>{if(row.status!=="active")fail(403,"QT-KEY-REVOKED","This QT key has been revoked. Contact support.");if(future(row.expires_at))fail(403,"QT-KEY-EXPIRED","This QT key has expired.");};
  const runtime=async version=>{
-  const state=await settings.get();if(state.maintenance.enabled)fail(503,"QT-MAINTENANCE",state.maintenance.message);
+  const state=await policy();if(state.maintenance.enabled)fail(503,"QT-MAINTENANCE",state.maintenance.message);
   if(typeof version!=="string"||!/^\d+\.\d+\.\d+(?:[+-][a-zA-Z0-9.-]+)?$/.test(version)||compareVersions(version,state.version.requiredVersion)<0){throw Object.assign(new Error(state.version.message),{status:426,code:"QT-UPDATE-REQUIRED",update:qtUpdatePayload(state.version)});}
  };
  const tokens=async(client,row,deviceHash)=>{
+  if(discordRequired&&!hasDiscordProof(row,deviceHash))fail(403,'QT-DISCORD-REQUIRED','Verify your Discord account before using QT Premium Utility.');
   const refreshToken=randomToken();const lifetime=Math.min(config.qtAccessTokenMinutes*60,row.expires_at?Math.floor((new Date(row.expires_at)-Date.now())/1000):Infinity);
   if(lifetime<1)fail(403,"QT-KEY-EXPIRED","This QT key has expired.");
   const accessToken=jwt.sign({sub:row.id,product:QT_PRODUCT,type:"access",deviceHash,ver:row.token_version},config.jwtSecret,
@@ -60,8 +67,16 @@ export function createQtService({transaction=tx,execute=query}={}) {
   await client.query("DELETE FROM qt_refresh_tokens WHERE license_id=$1 AND (expires_at<NOW() OR revoked_at<NOW()-INTERVAL '1 day')",[row.id]);
   return {product:QT_PRODUCT,accessToken,refreshToken,leaseSeconds:lifetime,serverTime:new Date().toISOString(),license:qtPublicLicense(row)};
  };
+ const finishActivation=async(client,row,deviceHash,deviceName)=>{
+  const result=await client.query(`UPDATE qt_licenses SET device_hash=$2,device_name=$3,bound_at=COALESCE(bound_at,NOW()),
+   activated_at=COALESCE(activated_at,NOW()),last_seen_at=NOW(),updated_at=NOW(),
+   expires_at=CASE WHEN plan='trial' THEN COALESCE(expires_at,NOW()+duration_seconds*INTERVAL '1 second') ELSE NULL END
+   WHERE id=$1 RETURNING *`,[row.id,deviceHash,clean(deviceName,160)]);
+  return tokens(client,result.rows[0],deviceHash);
+ };
+ const discord=createDiscordLink({execute,transaction,lookup,usable,runtime,finishActivation,deviceHashFor:qtDeviceHash,audit,env:discordEnv,fetcher:discordFetch});
  return {
-  settings,
+  settings,discord,policy,
   async activate(body){
    await runtime(body.appVersion);const deviceHash=qtDeviceHash(body.deviceId);const key=clean(body.licenseKey,100).toUpperCase();
    if(!keyPattern.test(key))fail(401,"QT-KEY-INVALID","Enter a valid QT Optimizer key. MatchIntel keys do not unlock QT.");
@@ -69,11 +84,8 @@ export function createQtService({transaction=tx,execute=query}={}) {
     let row=await lookup(client,key);usable(row);
     if(row.device_hash&&row.device_hash!==deviceHash)fail(403,"QT-HWID-LOCKED","This key is locked to another PC. Ask staff for a device reset.");
     if(row.plan==="trial"&&!row.expires_at&&!(Number(row.duration_seconds)>0))fail(500,"QT-KEY-CONFIGURATION","The key duration is missing. Contact support.");
-    const result=await client.query(`UPDATE qt_licenses SET device_hash=$2,device_name=$3,bound_at=COALESCE(bound_at,NOW()),
-     activated_at=COALESCE(activated_at,NOW()),last_seen_at=NOW(),updated_at=NOW(),
-     expires_at=CASE WHEN plan='trial' THEN COALESCE(expires_at,NOW()+duration_seconds*INTERVAL '1 second') ELSE NULL END
-     WHERE id=$1 RETURNING *`,[row.id,deviceHash,clean(body.deviceName,160)]);
-    row=result.rows[0];return tokens(client,row,deviceHash);
+    if(discordRequired)return discord.begin(client,row,body,deviceHash);
+    return finishActivation(client,row,deviceHash,body.deviceName);
    });
   },
   async refresh(body){
@@ -89,6 +101,10 @@ export function createQtService({transaction=tx,execute=query}={}) {
     const token=result.rows[0];
     if(!token||token.revoked_at||future(token.expires_at)||token.token_version!==row.token_version)fail(401,"QT-REFRESH-INVALID","Saved activation was reset or expired. Enter your key again.");
     if(token.device_hash!==deviceHash||row.device_hash!==deviceHash)fail(403,"QT-HWID-LOCKED","This activation belongs to another PC.");
+    if(discordRequired&&!hasDiscordProof(row,deviceHash)){
+     const pending=await discord.begin(client,row,body,deviceHash);
+     await client.query('UPDATE qt_refresh_tokens SET revoked_at=NOW() WHERE id=$1',[token.id]);return pending;
+    }
     await client.query("UPDATE qt_refresh_tokens SET revoked_at=NOW() WHERE id=$1",[token.id]);
     await client.query("UPDATE qt_licenses SET last_seen_at=NOW() WHERE id=$1",[row.id]);return tokens(client,row,deviceHash);
    });
@@ -98,6 +114,7 @@ export function createQtService({transaction=tx,execute=query}={}) {
    if(claims.type!=="access"||claims.product!==QT_PRODUCT)fail(401,"QT-AUTH-INVALID","A QT access token is required.");
    const deviceHash=qtDeviceHash(deviceId);const result=await execute("SELECT * FROM qt_licenses WHERE id=$1",[claims.sub]);const row=result.rows[0];
    if(!row)fail(401,"QT-AUTH-INVALID","QT license no longer exists.");usable(row);
+   if(discordRequired&&!hasDiscordProof(row,deviceHash))fail(403,'QT-DISCORD-REQUIRED','Verify your Discord account before using QT Premium Utility.');
    if(!row.device_hash||row.device_hash!==deviceHash||claims.deviceHash!==deviceHash||claims.ver!==row.token_version)fail(401,"QT-AUTH-INVALID","QT device activation was reset.");
    return {product:QT_PRODUCT,license:qtPublicLicense(row)};
   },
@@ -157,7 +174,8 @@ export function createQtRouter(service=createQtService()) {
  router.use((_req,res,next)=>{res.setHeader("Cache-Control","no-store");next();});
  const call=fn=>async(req,res)=>{try{res.json(await fn(req));}catch(error){res.status(error.status||500).json({code:error.code||"QT-SERVER",message:error.status?error.message:"QT licensing is temporarily unavailable. Try again shortly.",...(error.status===426?error.update:{})});}};
  const activationLimit=rateLimit({windowMs:15*60000,limit:30,skipSuccessfulRequests:true,standardHeaders:true,legacyHeaders:false,message:{code:"QT-RATE-LIMIT",message:"Too many activation attempts. Wait 15 minutes before trying again."}});
- router.get("/config",call(async()=>{const state=await service.settings.get();return {product:QT_PRODUCT,protocol:1,...qtUpdatePayload(state.version),maintenance:state.maintenance.enabled};}));
+ router.get("/config",call(async()=>{const state=await service.policy();return {product:QT_PRODUCT,protocol:1,activationProtocol:2,discordRequired:true,discordConfigured:service.discord.configured,...qtUpdatePayload(state.version),maintenance:state.maintenance.enabled};}));
+ router.use('/discord',createDiscordRouter(service.discord));
  router.post("/licenses/activate",activationLimit,call(req=>service.activate(req.body||{})));
  router.post("/auth/refresh",call(req=>service.refresh(req.body||{})));
  router.get("/licenses/status",call(req=>service.status(String(req.headers.authorization||"").replace(/^Bearer /,""),req.headers["x-qt-device"])));

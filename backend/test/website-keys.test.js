@@ -17,7 +17,7 @@ for (const f of ['001_init.sql', '009_qt_optimizer_licenses.sql']) await db.exec
 const adapt = c => ({ query: async (sql, args) => { const r = await c.query(sql, args); return { rows: r.rows, rowCount: r.rows.length }; } });
 const execute = adapt(db).query, transaction = fn => db.transaction(c => fn(adapt(c)));
 const actor = '111111111111111111', owner = '222222222222222222', another = '333333333333333333';
-const runtime = createQtService({ execute, transaction });
+const runtime = createQtService({discordRequired:false, execute, transaction });
 // A real old license is issued and activated before the new migration.
 const old = await runtime.generate({ plan: 'lifetime', discordUserId: owner }, actor);
 const device = 'QT1-' + 'A'.repeat(64), otherDevice = 'QT1-' + 'B'.repeat(64);

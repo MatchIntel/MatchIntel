@@ -1,3 +1,7 @@
+# Discord verification release
+
+QT Premium Utility 3.0.0 requires backend 0.12.0 and the Helper application's Discord OAuth configuration. See [DISCORD-LINK-SETUP.md](DISCORD-LINK-SETUP.md) before deploying or distributing this version.
+
 ## Sales and expenses update — v0.11.0
 
 Adds `/expense`, `/expenses`, `/voidexpense` and net-profit reporting. Deploy the backend first, then the bot. Existing variables and database are retained. See [SALES-SETUP.md](SALES-SETUP.md) for commands and upgrade steps.
