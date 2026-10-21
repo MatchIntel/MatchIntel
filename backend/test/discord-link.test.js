@@ -43,6 +43,7 @@ test('in-app confirmation atomically links website key, binds one PC, enables bo
  const grant=await svc.discord.complete(proof(gate));assert.equal(grant.license.discordLinked,true);assert.equal(grant.license.deviceBound,true);assert.ok(grant.accessToken);assert.ok(grant.license.activatedAt);assert.ok(grant.license.expiresAt);
  assert.equal((await svc.list(owner)).licenses.some(l=>l.fullKey===k),true);
  const recovery=await api(`/v1/qt-admin/users/${owner}/licenses/reveal`,{headers:{'X-Admin-Key':'discord-admin','X-Admin-Actor':'discord-self:'+owner}});assert.ok((await recovery.json()).licenses.some(l=>l.fullKey===k));
+ const staffLookup=await api('/v1/qt-admin/keyinfo',{body:{discordUserId:owner,page:1,limit:5},headers:{'X-Admin-Key':'discord-admin','X-Admin-Actor':actor}});const linked=await staffLookup.json();assert.equal(linked.matchType,'user');assert.ok(linked.licenses.some(l=>l.fullKey===k&&l.source==='website'&&l.discordUserId===owner));
  assert.equal((await svc.status(grant.accessToken,device)).license.discordLinked,true);
  assert.ok((await svc.refresh({refreshToken:grant.refreshToken,deviceId:device,appVersion:'3.0.0'})).accessToken);
  await assert.rejects(()=>svc.discord.complete(proof(gate)),e=>e.code==='QT-DISCORD-PENDING');

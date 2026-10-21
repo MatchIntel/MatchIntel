@@ -36,11 +36,11 @@ export function createDiscordLink({execute,transaction,lookup,usable,runtime,fin
   let token;
   const form={grant_type:'authorization_code',client_id:clientId,client_secret:clientSecret,redirect_uri:redirectUri,code,code_verifier:verifier};
   try {
-   const response=await fetcher('https://discord.com/api/oauth2/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'QuiltedTweaks-Helper/0.12.0'},body:new URLSearchParams(form),signal:AbortSignal.timeout(12000),redirect:'error'});
+   const response=await fetcher('https://discord.com/api/oauth2/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'QuiltedTweaks-Helper/0.12.1'},body:new URLSearchParams(form),signal:AbortSignal.timeout(12000),redirect:'error'});
    if(!response.ok)fail(502,'QT-DISCORD-EXCHANGE','Discord could not verify this sign-in. Return to QT and try again.');
    const data=await response.json();token=data.access_token;
    if(typeof token!=='string'||token.length<10||String(data.token_type).toLowerCase()!=='bearer'||!String(data.scope||'').split(/\s+/).includes('identify'))fail(502,'QT-DISCORD-RESPONSE','Discord returned an incomplete identity response. Try again.');
-   const identity=await fetcher('https://discord.com/api/v10/users/@me',{headers:{Authorization:'Bearer '+token,'User-Agent':'QuiltedTweaks-Helper/0.12.0'},signal:AbortSignal.timeout(12000),redirect:'error'});
+   const identity=await fetcher('https://discord.com/api/v10/users/@me',{headers:{Authorization:'Bearer '+token,'User-Agent':'QuiltedTweaks-Helper/0.12.1'},signal:AbortSignal.timeout(12000),redirect:'error'});
    if(!identity.ok)fail(502,'QT-DISCORD-IDENTITY','Discord could not read your account. Try signing in again.');
    const user=await identity.json();
    if(!/^\d{15,25}$/.test(String(user.id))||user.bot||typeof user.username!=='string'||!user.username)fail(502,'QT-DISCORD-IDENTITY','Discord did not return a valid user account.');

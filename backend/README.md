@@ -1,3 +1,7 @@
+## Discord user key lookup — v0.12.1
+
+Use `/keyinfo user:@customer` to view every linked key, including website purchases linked through QT Discord sign-in. Private staff results include full keys, plan, status, expiry, source and PC binding count, with Previous/Next pages. Deploy backend v0.12.1 first, then Helper bot v0.12.1. Keep existing variables and database. No EXE update is needed. See [KEYINFO-SETUP.md](KEYINFO-SETUP.md).
+
 # Discord verification release
 
 QT Premium Utility 3.0.0 requires backend 0.12.0 and the Helper application's Discord OAuth configuration. See [DISCORD-LINK-SETUP.md](DISCORD-LINK-SETUP.md) before deploying or distributing this version.

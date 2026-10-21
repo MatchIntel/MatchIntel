@@ -134,6 +134,17 @@ export function createQtService({transaction=tx,execute=query,discordRequired=tr
    await audit({query:execute},"reveal_user",discordId(actor),userId,{licenseCount:result.rowCount});
    return {licenses:result.rows.map(row=>qtPublicLicense(row,true))};
   },
+  async listPage(userId,actor,{page=1,limit=5}={}){
+   userId=discordId(userId);actor=discordId(actor);
+   if(!Number.isSafeInteger(page)||page<1||!Number.isSafeInteger(limit)||limit<1||limit>10)fail(400,'QT-PAGE','Choose a positive page and a limit from 1 to 10.');
+   return transaction(async client=>{
+    const count=await client.query('SELECT COUNT(*)::int AS total FROM qt_licenses WHERE discord_user_id=$1',[userId]);
+    const total=count.rows[0].total,totalPages=Math.max(1,Math.ceil(total/limit));page=Math.min(page,totalPages);
+    const result=await client.query('SELECT * FROM qt_licenses WHERE discord_user_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3',[userId,limit,(page-1)*limit]);
+    await audit(client,'reveal_user',actor,userId,{licenseCount:result.rowCount,total,page,limit});
+    return {matchType:'user',discordUserId:userId,licenses:result.rows.map(row=>qtPublicLicense(row,true)),total,totalPages,page,limit};
+   });
+  },
   async manage(reference,action,body,actor){
    actor=discordId(actor);
    return transaction(async client=>{
