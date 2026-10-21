@@ -1,0 +1,859 @@
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChannelType,
+  EmbedBuilder,
+  PermissionFlagsBits
+} from "discord.js";
+import { api } from "./api.js";
+import { canUse, accessLevel } from "./access.js";
+import { config } from "./config.js";
+import { COLORS, discordTime, durationText, licenseExpiryText, licenseStatusText, truncate } from "./format.js";
+import { formatBotMessage } from "./messageFormat.js";
+import {
+  PAYMENT_REMINDER_COOLDOWN_MS,
+  globalPaymentRemindersEnabled,
+  parseTicketTopic,
+  paymentMessageMatches,
+  ticketTopic,
+  topicWithGlobalPaymentSetting
+} from "./paymentSafety.js";
+
+const settingsCache = new Map();
+const SETTINGS_TTL_MS = 30_000;
+const MAX_ATTACHMENT_BYTES = 24 * 1024 * 1024;
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function cleanChannelName(value) {
+  return String(value || "user")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 70) || "user";
+}
+
+function defaultGuildSettings(guildId) {
+  return {
+    guildId,
+    welcomeChannelId: "",
+    autoRoleId: "",
+    welcomeTitle: "Welcome to Quilted Tweaks",
+    welcomeMessage: "Welcome {member} to **{server}**! You are member **#{memberCount}**. Check the download and support channels to get started.",
+    ticketCategoryId: "",
+    ticketPanelChannelId: "",
+    ticketStaffRoleIds: [],
+    updatesChannelId: config.updatesChannelId
+  };
+}
+
+export async function getGuildSettings(guildId, { fresh = false } = {}) {
+  const cached = settingsCache.get(guildId);
+  if (!fresh && cached && Date.now() - cached.savedAt < SETTINGS_TTL_MS) return cached.value;
+  const result = await api(`/v1/admin/discord/guilds/${guildId}/settings`, { actor: "discord-bot" });
+  const value = { ...defaultGuildSettings(guildId), ...(result.settings || {}) };
+  settingsCache.set(guildId, { value, savedAt: Date.now() });
+  return value;
+}
+
+async function saveGuildSettings(guildId, patch, actor) {
+  const result = await api(`/v1/admin/discord/guilds/${guildId}/settings`, {
+    method: "PUT",
+    actor,
+    body: JSON.stringify(patch)
+  });
+  const value = { ...defaultGuildSettings(guildId), ...(result.settings || {}) };
+  settingsCache.set(guildId, { value, savedAt: Date.now() });
+  return value;
+}
+
+function welcomeText(template, member) {
+  return String(template || "")
+    .replaceAll("{member}", `<@${member.id}>`)
+    .replaceAll("{server}", member.guild.name)
+    .replaceAll("{memberCount}", String(member.guild.memberCount));
+}
+
+function welcomeEmbed(settings, member) {
+  return new EmbedBuilder()
+    .setColor(COLORS.blue)
+    .setTitle(settings.welcomeTitle || "Welcome to Quilted Tweaks")
+    .setDescription(welcomeText(settings.welcomeMessage, member))
+    .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
+    .setFooter({ text: `${member.guild.name} • Member #${member.guild.memberCount}` })
+    .setTimestamp();
+}
+
+async function sendWelcome(member, settings) {
+  if (!settings.welcomeChannelId) return false;
+  const channel = member.guild.channels.cache.get(settings.welcomeChannelId)
+    || await member.guild.channels.fetch(settings.welcomeChannelId).catch(() => null);
+  if (!channel || typeof channel.send !== "function") return false;
+  await channel.send({
+    content: `<@${member.id}>`,
+    embeds: [welcomeEmbed(settings, member)],
+    allowedMentions: { users: [member.id], roles: [], parse: [] }
+  });
+  return true;
+}
+
+export async function handleSetupWelcome(interaction) {
+  const channel = interaction.options.getChannel("channel", true);
+  const role = interaction.options.getRole("role", true);
+  if (!interaction.guild || role.guild.id !== interaction.guild.id) throw new Error("This command must be used in the Quilted Tweaks server.");
+  if (role.id === interaction.guild.id) throw new Error("Choose a normal member role, not @everyone.");
+  if (role.managed) throw new Error("That role is managed by another integration and cannot be assigned automatically.");
+  const me = interaction.guild.members.me || await interaction.guild.members.fetchMe();
+  if (role.position >= me.roles.highest.position) {
+    throw new Error("Move the Quilted Tweaks Helper role above the automatic role in Server Settings → Roles.");
+  }
+  const settings = await saveGuildSettings(interaction.guild.id, {
+    welcomeChannelId: channel.id,
+    autoRoleId: role.id,
+    welcomeTitle: interaction.options.getString("title") || "Welcome to Quilted Tweaks",
+    welcomeMessage: interaction.options.getString("message") || defaultGuildSettings(interaction.guild.id).welcomeMessage
+  }, interaction.user.id);
+
+  await interaction.editReply({
+    embeds: [new EmbedBuilder()
+      .setColor(COLORS.green)
+      .setTitle("Welcome system configured")
+      .setDescription(`New members will receive ${role} and a welcome message will be sent in ${channel}.`)
+      .addFields(
+        { name: "Title", value: settings.welcomeTitle },
+        { name: "Message", value: truncate(settings.welcomeMessage, 1024) },
+        { name: "Placeholders", value: "`{member}` `{server}` `{memberCount}`" }
+      )]
+  });
+}
+
+export async function handleTestWelcome(interaction) {
+  const settings = await getGuildSettings(interaction.guildId, { fresh: true });
+  if (!settings.welcomeChannelId) throw new Error("Run `/setupwelcome` first.");
+  const member = interaction.guild.members.cache.get(interaction.user.id)
+    || await interaction.guild.members.fetch(interaction.user.id);
+  const sent = await sendWelcome(member, settings);
+  if (!sent) throw new Error("The configured welcome channel could not be found or is not writable.");
+  await interaction.editReply("Welcome preview sent.");
+}
+
+export async function handleGuildMemberAdd(member) {
+  if (member.user.bot) return;
+  try {
+    const settings = await getGuildSettings(member.guild.id);
+    if (settings.autoRoleId) {
+      const role = member.guild.roles.cache.get(settings.autoRoleId)
+        || await member.guild.roles.fetch(settings.autoRoleId).catch(() => null);
+      if (role) {
+        await member.roles.add(role, "Quilted Tweaks automatic member role").catch(error => {
+          console.error(`[welcome-role] Failed for ${member.user.tag}:`, error.message || error);
+        });
+      }
+    }
+    await sendWelcome(member, settings);
+  } catch (error) {
+    console.error(`[welcome] Failed for ${member.user.tag}:`, error.message || error);
+  }
+}
+
+const paymentReminderCooldowns = new Map();
+
+const PAYMENT_EMOJIS = Object.freeze({
+  cashapp: "<:cashapp:1560055356074496061>",
+  venmo: "<:Venmo:1560055180953657485>",
+  applepay: "<:applepay:1560055341511737394>",
+  paypal: "<:Paypal:1560055327188197436>"
+});
+
+function applePayInstruction() {
+  return config.applePayUserId
+    ? `Ping <@${config.applePayUserId}> for further help.`
+    : config.applePayContact;
+}
+
+function paymentMethodsText() {
+  return [
+    "# 💳 PAYMENT METHODS",
+    "We accept:",
+    "",
+    `- ${PAYMENT_EMOJIS.cashapp} **CASH APP (` + "`!cashapp`" + `)**`,
+    `- ${PAYMENT_EMOJIS.venmo} **VENMO (` + "`!venmo`" + `)**`,
+    `- ${PAYMENT_EMOJIS.applepay} **APPLE PAY (` + "`!applepay`" + `)**`,
+    `- ${PAYMENT_EMOJIS.paypal} **PAYPAL (` + "`!paypal`" + `)**`,
+    "",
+    "Use the command beside a payment method to have **Quilted Tweaks Helper** post the official payment details.",
+    "Only use payment information posted by this bot inside your purchase ticket."
+  ].join("\n");
+}
+
+function paymentMethodEmbed(method) {
+  const methods = {
+    cashapp: {
+      emoji: PAYMENT_EMOJIS.cashapp,
+      title: "CASH APP",
+      detail: `Send Cash App payments to **${config.cashAppHandle}**.`,
+      value: config.cashAppHandle
+    },
+    venmo: {
+      emoji: PAYMENT_EMOJIS.venmo,
+      title: "VENMO",
+      detail: `Send Venmo payments to **${config.venmoHandle}**.`,
+      value: config.venmoHandle
+    },
+    applepay: {
+      emoji: PAYMENT_EMOJIS.applepay,
+      title: "APPLE PAY",
+      detail: applePayInstruction(),
+      value: config.applePayUserId ? `<@${config.applePayUserId}>` : "@liamfv"
+    },
+    paypal: {
+      emoji: PAYMENT_EMOJIS.paypal,
+      title: "PAYPAL",
+      detail: `Send PayPal payments to **${config.paypalEmail}**.`,
+      value: config.paypalEmail
+    }
+  };
+  const selected = methods[method];
+  if (!selected) return null;
+  return new EmbedBuilder()
+    .setColor(COLORS.blue)
+    .setTitle(`${selected.emoji} ${selected.title}`)
+    .setDescription(selected.detail)
+    .addFields({ name: "Official payment destination", value: `\`${selected.value}\`` })
+    .setFooter({ text: "Quilted Tweaks Helper • Use only the payment details posted by this bot." });
+}
+
+export async function handlePaymentMethodCommand(message) {
+  try {
+    if (!message.guild || message.author?.bot || !message.channel) return false;
+    const command = String(message.content || "").trim().split(/\s+/)[0]?.toLowerCase();
+    const commandMap = {
+      "!cashapp": "cashapp",
+      "!venmo": "venmo",
+      "!applepay": "applepay",
+      "!paypal": "paypal"
+    };
+    const method = commandMap[command];
+    if (!method) return false;
+
+    const parsed = parseTicketTopic(message.channel.topic);
+    if (!parsed || parsed.status !== "open" || ticketTypeForChannel(message.channel, parsed) !== "purchase") {
+      await message.reply({
+        content: "Payment commands only work inside an open **Quilted Tweaks Purchase** ticket.",
+        allowedMentions: { repliedUser: false, parse: [] }
+      }).catch(() => {});
+      return true;
+    }
+
+    const embed = paymentMethodEmbed(method);
+    const users = method === "applepay" && config.applePayUserId ? [config.applePayUserId] : [];
+    await message.channel.send({
+      embeds: [embed],
+      allowedMentions: { parse: [], users, roles: [] }
+    });
+    return true;
+  } catch (error) {
+    console.error(`[payment-command] Failed in ${message.channel?.id || "unknown"}:`, error.message || error);
+    return false;
+  }
+}
+
+function ticketOpenButtons() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("mi_ticket_claim").setLabel("Claim Ticket").setEmoji("🙋").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("mi_ticket_close").setLabel("Close Ticket").setEmoji("🔒").setStyle(ButtonStyle.Danger)
+  );
+}
+
+function ticketClosedButtons() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("mi_ticket_reopen").setLabel("Reopen").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("mi_ticket_delete").setLabel("Delete permanently").setStyle(ButtonStyle.Danger)
+  );
+}
+
+const TICKET_TYPES = Object.freeze({
+  general: Object.freeze({
+    key: "general",
+    buttonId: "mi_ticket_create_general",
+    label: "General Support",
+    emoji: "🎫",
+    style: ButtonStyle.Primary,
+    channelPrefix: "general-support",
+    title: "General Support Ticket",
+    description: "Tell us what you need help with and attach any relevant screenshots or files."
+  }),
+  purchase: Object.freeze({
+    key: "purchase",
+    buttonId: "mi_ticket_create_purchase",
+    label: "Purchase",
+    emoji: "🛒",
+    style: ButtonStyle.Success,
+    channelPrefix: "purchase",
+    title: "Purchase Ticket",
+    description: "Tell us what you would like to purchase or ask about plans, payment, or getting started."
+  }),
+  bug: Object.freeze({
+    key: "bug",
+    buttonId: "mi_ticket_create_bug",
+    label: "Report a Bug",
+    emoji: "🐛",
+    style: ButtonStyle.Danger,
+    channelPrefix: "bug-report",
+    title: "Bug Report Ticket",
+    description: "Describe the bug, what you expected, what happened, and attach screenshots, logs, or steps to reproduce it."
+  })
+});
+
+function ticketPanelButtons() {
+  return new ActionRowBuilder().addComponents(
+    ...Object.values(TICKET_TYPES).map(type => new ButtonBuilder()
+      .setCustomId(type.buttonId)
+      .setLabel(type.label)
+      .setEmoji(type.emoji)
+      .setStyle(type.style))
+  );
+}
+
+function ticketTypeFromCustomId(customId) {
+  return Object.values(TICKET_TYPES).find(type => type.buttonId === customId) || TICKET_TYPES.general;
+}
+
+function ticketTypeForChannel(channel, parsed = null) {
+  if (parsed?.type && TICKET_TYPES[parsed.type]) return parsed.type;
+  const name = String(channel?.name || "").replace(/^closed-/, "");
+  if (name.startsWith(`${TICKET_TYPES.purchase.channelPrefix}-`)) return "purchase";
+  if (name.startsWith(`${TICKET_TYPES.bug.channelPrefix}-`)) return "bug";
+  return "general";
+}
+
+export async function handleSetupTickets(interaction) {
+  if (!interaction.guild || !interaction.channel || typeof interaction.channel.send !== "function") {
+    throw new Error("Run this command in the server channel where the ticket panel should appear.");
+  }
+  let category = interaction.options.getChannel("category");
+  if (!category) {
+    category = await interaction.guild.channels.create({
+      name: "Quilted Tweaks Tickets",
+      type: ChannelType.GuildCategory,
+      reason: `Ticket system configured by ${interaction.user.tag}`
+    });
+  }
+  const supportRole = interaction.options.getRole("support_role");
+  const modRole = interaction.options.getRole("mod_role");
+  if (supportRole?.id === interaction.guild.id || modRole?.id === interaction.guild.id) {
+    throw new Error("Do not use @everyone as a ticket staff role.");
+  }
+  const ticketStaffRoleIds = unique([
+    ...config.staffRoles,
+    ...config.adminRoles,
+    supportRole?.id,
+    modRole?.id
+  ]);
+  await saveGuildSettings(interaction.guild.id, {
+    ticketCategoryId: category.id,
+    ticketPanelChannelId: interaction.channel.id,
+    ticketStaffRoleIds,
+    updatesChannelId: config.updatesChannelId
+  }, interaction.user.id);
+
+  const panel = await interaction.channel.send({
+    embeds: [new EmbedBuilder()
+      .setColor(COLORS.blue)
+      .setTitle(interaction.options.getString("title") || "Quilted Tweaks Support")
+      .setDescription(interaction.options.getString("message") || "Choose the option below that best matches what you need. Please open one ticket per issue.")
+      .setFooter({ text: "A Quilted Tweaks staff member will respond as soon as possible." })],
+    components: [ticketPanelButtons()]
+  });
+  await interaction.editReply(`Ticket panel created: ${panel.url}`);
+}
+
+async function createTicket(interaction, ticketType = TICKET_TYPES.general) {
+  const guild = interaction.guild;
+  const settings = await getGuildSettings(guild.id, { fresh: true });
+  if (!settings.ticketCategoryId) {
+    return interaction.reply({ content: "The ticket system has not been configured yet.", ephemeral: true });
+  }
+  await Promise.all([guild.channels.fetch(), guild.roles.fetch()]);
+  const existing = guild.channels.cache.find(channel => {
+    const parsed = parseTicketTopic(channel.topic);
+    return parsed?.userId === interaction.user.id && parsed.status === "open";
+  });
+  if (existing) {
+    return interaction.reply({ content: `You already have an open ticket: ${existing}`, ephemeral: true });
+  }
+
+  const permissionMap = new Map();
+  permissionMap.set(guild.roles.everyone.id, { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] });
+  permissionMap.set(interaction.user.id, {
+    id: interaction.user.id,
+    allow: [
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.SendMessages,
+      PermissionFlagsBits.ReadMessageHistory,
+      PermissionFlagsBits.AttachFiles,
+      PermissionFlagsBits.EmbedLinks
+    ]
+  });
+  permissionMap.set(interaction.client.user.id, {
+    id: interaction.client.user.id,
+    allow: [
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.SendMessages,
+      PermissionFlagsBits.ReadMessageHistory,
+      PermissionFlagsBits.ManageChannels,
+      PermissionFlagsBits.ManageMessages,
+      PermissionFlagsBits.AttachFiles,
+      PermissionFlagsBits.EmbedLinks
+    ]
+  });
+  for (const id of unique([...settings.ticketStaffRoleIds, ...config.staffRoles, ...config.adminRoles])) {
+    if (id === guild.roles.everyone.id || !guild.roles.cache.has(id)) continue;
+    permissionMap.set(id, {
+      id,
+      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks]
+    });
+  }
+  for (const ownerId of config.owners) {
+    const ownerMember = guild.members.cache.get(ownerId)
+      || await guild.members.fetch(ownerId).catch(() => null);
+    if (!ownerMember) continue;
+    permissionMap.set(ownerId, {
+      id: ownerId,
+      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks]
+    });
+  }
+
+  const base = cleanChannelName(interaction.user.globalName || interaction.user.username);
+  const channel = await guild.channels.create({
+    name: `${ticketType.channelPrefix}-${base}-${String(Date.now()).slice(-4)}`,
+    type: ChannelType.GuildText,
+    parent: settings.ticketCategoryId,
+    topic: ticketTopic(interaction.user.id, "open", "", ticketType.key, true),
+    permissionOverwrites: [...permissionMap.values()],
+    reason: `Quilted Tweaks ${ticketType.label.toLowerCase()} ticket opened by ${interaction.user.tag}`
+  });
+
+  await channel.send({
+    content: `<@${interaction.user.id}>`,
+    embeds: [new EmbedBuilder()
+      .setColor(COLORS.blue)
+      .setTitle(ticketType.title)
+      .setDescription(`${ticketType.description} A Quilted Tweaks staff member can claim the ticket and respond here.`)
+      .addFields(
+        { name: "Ticket type", value: `${ticketType.emoji} ${ticketType.label}`, inline: true },
+        { name: "Opened by", value: `<@${interaction.user.id}>`, inline: true },
+        { name: "Created", value: discordTime(new Date()), inline: true }
+      )
+      .setFooter({ text: "Quilted Tweaks Helper • Never post private license or account information publicly." })],
+    components: [ticketOpenButtons()],
+    allowedMentions: { users: [interaction.user.id], parse: [] }
+  });
+
+  if (ticketType.key === "purchase") {
+    const paymentPanel = await channel.send({
+      content: paymentMethodsText(),
+      allowedMentions: { parse: [], users: [], roles: [] }
+    });
+    await paymentPanel.pin("Official Quilted Tweaks payment methods").catch(() => {});
+  }
+
+  await interaction.reply({ content: `Your private ticket is ready: ${channel}`, ephemeral: true });
+}
+
+async function claimTicket(interaction) {
+  if (!canUse(interaction, "staff")) return interaction.reply({ content: "Only Quilted Tweaks staff can claim tickets.", ephemeral: true });
+  const parsed = parseTicketTopic(interaction.channel?.topic);
+  if (!parsed || parsed.status !== "open") return interaction.reply({ content: "This is not an open Quilted Tweaks ticket.", ephemeral: true });
+  await interaction.channel.setTopic(ticketTopic(
+    parsed.userId,
+    "open",
+    interaction.user.id,
+    ticketTypeForChannel(interaction.channel, parsed),
+    parsed.paymentReminderEnabled
+  ));
+  await interaction.channel.send({ embeds: [new EmbedBuilder().setColor(COLORS.green).setDescription(`✅ Ticket claimed by <@${interaction.user.id}>.`)] });
+  await interaction.reply({ content: "Ticket claimed.", ephemeral: true });
+}
+
+async function closeTicket(interaction) {
+  const parsed = parseTicketTopic(interaction.channel?.topic);
+  if (!parsed || parsed.status !== "open") return interaction.reply({ content: "This is not an open Quilted Tweaks ticket.", ephemeral: true });
+  const isOwner = parsed.userId === interaction.user.id;
+  if (!isOwner && !canUse(interaction, "staff")) return interaction.reply({ content: "Only the ticket opener or Quilted Tweaks staff can close this ticket.", ephemeral: true });
+  await interaction.channel.permissionOverwrites.edit(parsed.userId, { ViewChannel: true, SendMessages: false });
+  await interaction.channel.setTopic(ticketTopic(
+    parsed.userId,
+    "closed",
+    parsed.claimedBy,
+    ticketTypeForChannel(interaction.channel, parsed),
+    parsed.paymentReminderEnabled
+  ));
+  if (!interaction.channel.name.startsWith("closed-")) await interaction.channel.setName(`closed-${interaction.channel.name}`.slice(0, 100));
+  await interaction.channel.send({
+    embeds: [new EmbedBuilder().setColor(COLORS.yellow).setDescription(`🔒 Ticket closed by <@${interaction.user.id}>.`)],
+    components: [ticketClosedButtons()]
+  });
+  await interaction.reply({ content: "Ticket closed.", ephemeral: true });
+}
+
+async function reopenTicket(interaction) {
+  if (!canUse(interaction, "staff")) return interaction.reply({ content: "Only Quilted Tweaks staff can reopen tickets.", ephemeral: true });
+  const parsed = parseTicketTopic(interaction.channel?.topic);
+  if (!parsed || parsed.status !== "closed") return interaction.reply({ content: "This is not a closed Quilted Tweaks ticket.", ephemeral: true });
+  await interaction.channel.permissionOverwrites.edit(parsed.userId, { ViewChannel: true, SendMessages: true });
+  await interaction.channel.setTopic(ticketTopic(
+    parsed.userId,
+    "open",
+    parsed.claimedBy,
+    ticketTypeForChannel(interaction.channel, parsed),
+    parsed.paymentReminderEnabled
+  ));
+  await interaction.channel.setName(interaction.channel.name.replace(/^closed-/, "").slice(0, 100));
+  await interaction.channel.send({
+    embeds: [new EmbedBuilder().setColor(COLORS.green).setDescription(`🔓 Ticket reopened by <@${interaction.user.id}>.`)],
+    components: [ticketOpenButtons()]
+  });
+  await interaction.reply({ content: "Ticket reopened.", ephemeral: true });
+}
+
+async function deleteTicket(interaction) {
+  if (accessLevel(interaction) !== "owner" && !canUse(interaction, "admin")) {
+    return interaction.reply({ content: "Only Quilted Tweaks admins or owners can permanently delete tickets.", ephemeral: true });
+  }
+  const parsed = parseTicketTopic(interaction.channel?.topic);
+  if (!parsed) return interaction.reply({ content: "This is not a Quilted Tweaks ticket.", ephemeral: true });
+  await interaction.reply({ content: "Deleting this ticket in 4 seconds…", ephemeral: true });
+  setTimeout(() => interaction.channel.delete(`Ticket deleted by ${interaction.user.tag}`).catch(console.error), 4000);
+}
+
+export async function handleTicketButton(interaction) {
+  switch (interaction.customId) {
+    case "mi_ticket_create": return createTicket(interaction, TICKET_TYPES.general); // Backward compatibility for older panels.
+    case "mi_ticket_create_general":
+    case "mi_ticket_create_purchase":
+    case "mi_ticket_create_bug":
+      return createTicket(interaction, ticketTypeFromCustomId(interaction.customId));
+    case "mi_ticket_claim": return claimTicket(interaction);
+    case "mi_ticket_close": return closeTicket(interaction);
+    case "mi_ticket_reopen": return reopenTicket(interaction);
+    case "mi_ticket_delete": return deleteTicket(interaction);
+    default: return false;
+  }
+}
+
+async function configuredTicketPanelChannel(guild, settings) {
+  if (!settings.ticketPanelChannelId) return null;
+  return guild.channels.cache.get(settings.ticketPanelChannelId)
+    || await guild.channels.fetch(settings.ticketPanelChannelId).catch(() => null);
+}
+
+async function readGlobalPaymentReminderState(guild, settings = null) {
+  const currentSettings = settings || await getGuildSettings(guild.id);
+  const panelChannel = await configuredTicketPanelChannel(guild, currentSettings);
+  return {
+    enabled: globalPaymentRemindersEnabled(panelChannel?.topic),
+    panelChannel
+  };
+}
+
+export async function handlePaymentReminder(interaction) {
+  if (!interaction.guild) throw new Error("Use this command inside the Quilted Tweaks server.");
+  const subcommand = interaction.options.getSubcommand();
+  const settings = await getGuildSettings(interaction.guild.id, { fresh: true });
+  const globalState = await readGlobalPaymentReminderState(interaction.guild, settings);
+
+  if (subcommand === "global") {
+    const enabled = interaction.options.getBoolean("enabled", true);
+    if (!globalState.panelChannel || typeof globalState.panelChannel.setTopic !== "function") {
+      throw new Error("Run `/setuptickets` again so the bot has a ticket panel channel for storing this setting.");
+    }
+    await globalState.panelChannel.setTopic(
+      topicWithGlobalPaymentSetting(globalState.panelChannel.topic, enabled),
+      `Payment reminder setting changed by ${interaction.user.tag}`
+    );
+    return interaction.editReply(`Purchase-ticket payment reminders are now **${enabled ? "enabled" : "disabled"} globally**.`);
+  }
+
+  const parsed = parseTicketTopic(interaction.channel?.topic);
+  const ticketType = ticketTypeForChannel(interaction.channel, parsed);
+  const isPurchaseTicket = parsed && ticketType === "purchase";
+
+  if (subcommand === "ticket") {
+    if (!isPurchaseTicket) throw new Error("Use the ticket setting inside a Quilted Tweaks purchase ticket.");
+    const enabled = interaction.options.getBoolean("enabled", true);
+    await interaction.channel.setTopic(ticketTopic(
+      parsed.userId,
+      parsed.status,
+      parsed.claimedBy,
+      "purchase",
+      enabled
+    ), `Payment reminder setting changed by ${interaction.user.tag}`);
+    if (!enabled) paymentReminderCooldowns.delete(interaction.channel.id);
+    return interaction.editReply(`Payment reminders are now **${enabled ? "enabled" : "disabled"} in this purchase ticket**.${enabled && !globalState.enabled ? " The global setting is still disabled, so reminders will remain silent until it is re-enabled." : ""}`);
+  }
+
+  const fields = [
+    { name: "Global reminders", value: globalState.enabled ? "Enabled" : "Disabled", inline: true }
+  ];
+  if (isPurchaseTicket) {
+    const ticketEnabled = parsed.paymentReminderEnabled;
+    fields.push(
+      { name: "This ticket", value: ticketEnabled ? "Enabled" : "Disabled", inline: true },
+      { name: "Effective status", value: globalState.enabled && ticketEnabled ? "Enabled" : "Disabled", inline: true }
+    );
+  } else {
+    fields.push({ name: "This channel", value: "Not a purchase ticket", inline: true });
+  }
+  return interaction.editReply({ embeds: [new EmbedBuilder()
+    .setColor(globalState.enabled ? COLORS.green : COLORS.yellow)
+    .setTitle("Payment reminder status")
+    .addFields(fields)
+    .setFooter({ text: `Quilted Tweaks Helper • PayPal: ${config.paypalEmail}` })] });
+}
+
+export async function handlePaymentSafetyMessage(message) {
+  try {
+    if (!message.guild || message.author?.bot || !message.channel || !paymentMessageMatches(message.content)) return false;
+    const parsed = parseTicketTopic(message.channel.topic);
+    if (!parsed || parsed.status !== "open" || ticketTypeForChannel(message.channel, parsed) !== "purchase") return false;
+    if (!parsed.paymentReminderEnabled) return false;
+
+    const { enabled: globalEnabled } = await readGlobalPaymentReminderState(message.guild);
+    if (!globalEnabled) return false;
+
+    const lastReminder = paymentReminderCooldowns.get(message.channel.id) || 0;
+    if (Date.now() - lastReminder < PAYMENT_REMINDER_COOLDOWN_MS) return false;
+    paymentReminderCooldowns.set(message.channel.id, Date.now());
+
+    await message.channel.send({
+      embeds: [new EmbedBuilder()
+        .setColor(COLORS.yellow)
+        .setTitle("Quilted Tweaks payment reminder")
+        .setDescription("Only use payment details posted by **Quilted Tweaks Helper**. If anyone asks you to send money to a different account or handle, stop and ask staff to verify it first.")
+        .addFields(
+          { name: "Cash App", value: `\`${config.cashAppHandle}\``, inline: true },
+          { name: "Venmo", value: `\`${config.venmoHandle}\``, inline: true },
+          { name: "PayPal", value: `\`${config.paypalEmail}\``, inline: true },
+          { name: "Apple Pay", value: config.applePayUserId ? `Ping <@${config.applePayUserId}> for further help.` : config.applePayContact }
+        )
+        .setFooter({ text: "Quilted Tweaks Helper • Owners can control reminders with /paymentreminder." })],
+      allowedMentions: { parse: [], users: [], roles: [] }
+    });
+    return true;
+  } catch (error) {
+    console.error(`[payment-reminder] Failed in ${message.channel?.id || "unknown"}:`, error.message || error);
+    return false;
+  }
+}
+
+async function attachmentPayload(attachment) {
+  if (!attachment) return null;
+  if (attachment.size > MAX_ATTACHMENT_BYTES) throw new Error(`${attachment.name} is larger than the 24 MB bot upload limit.`);
+  const response = await fetch(attachment.url, { signal: AbortSignal.timeout(20_000) });
+  if (!response.ok) throw new Error(`Could not download ${attachment.name} from Discord.`);
+  const data = Buffer.from(await response.arrayBuffer());
+  if (data.length > MAX_ATTACHMENT_BYTES) throw new Error(`${attachment.name} is larger than the 24 MB bot upload limit.`);
+  return { attachment: data, name: attachment.name || "attachment" };
+}
+
+async function collectAttachments(interaction, names) {
+  const files = [];
+  let total = 0;
+  for (const name of names) {
+    const attachment = interaction.options.getAttachment(name);
+    if (!attachment) continue;
+    total += attachment.size || 0;
+    if (total > MAX_ATTACHMENT_BYTES) throw new Error("The combined files are larger than the 24 MB bot upload limit.");
+    files.push(await attachmentPayload(attachment));
+  }
+  return files;
+}
+
+export async function handleSendThisMessage(interaction) {
+  if (!interaction.channel || typeof interaction.channel.send !== "function") throw new Error("This channel cannot receive bot messages.");
+  const message = formatBotMessage(interaction.options.getString("message") || "");
+  const title = interaction.options.getString("title") || "";
+  const files = await collectAttachments(interaction, ["file_1", "file_2", "file_3"]);
+  if (!message && !title && !files.length) throw new Error("Add a message, title, image, or file.");
+  const allowMentions = interaction.options.getBoolean("allow_mentions") === true;
+  const payload = {
+    files,
+    allowedMentions: allowMentions ? { parse: ["users", "roles", "everyone"] } : { parse: [] }
+  };
+  if (title || message.length > 2000) {
+    const builder = new EmbedBuilder()
+      .setColor(COLORS.blue)
+      .setTitle(title || config.botDisplayName);
+    if (message) builder.setDescription(message);
+    payload.embeds = [builder];
+  } else {
+    payload.content = message;
+  }
+  const sent = await interaction.channel.send(payload);
+  await interaction.editReply(`Message sent: ${sent.url}`);
+}
+
+export async function handlePublishUpdate(interaction) {
+  const selected = interaction.options.getChannel("channel");
+  const channelId = selected?.id || config.updatesChannelId;
+  const channel = selected || await interaction.client.channels.fetch(channelId).catch(() => null);
+  if (!channel || typeof channel.send !== "function") throw new Error(`Could not access the updates channel (${channelId}).`);
+  const component = interaction.options.getString("component", true);
+  const version = interaction.options.getString("version", true);
+  const summary = interaction.options.getString("summary", true);
+  const files = await collectAttachments(interaction, ["file"]);
+  const sent = await channel.send({
+    embeds: [new EmbedBuilder()
+      .setColor(COLORS.blue)
+      .setTitle(`Quilted Tweaks ${component} update — v${version}`)
+      .setDescription(summary)
+      .addFields({ name: "Published by", value: `<@${interaction.user.id}>` })
+      .setFooter({ text: `Quilted Tweaks release • ${component} • ${version}` })
+      .setTimestamp()],
+    files,
+    allowedMentions: { parse: [] }
+  });
+  await interaction.editReply(`Update published: ${sent.url}`);
+}
+
+export async function handleWhatsMyKey(interaction) {
+  if (interaction.inGuild()) {
+    return interaction.reply({
+      content: "For your security, open my Discord profile, press **Message**, and use `/whatsmykey` in our private DM.",
+      ephemeral: true
+    });
+  }
+  await interaction.deferReply();
+  const result = await api(`/v1/admin/users/${interaction.user.id}/licenses/reveal`, {
+    actor: `discord-self:${interaction.user.id}`
+  });
+  const licenses = Array.isArray(result.licenses) ? result.licenses : [];
+  if (!licenses.length) {
+    return interaction.editReply("No Quilted Tweaks key is linked to this Discord account. Open a support ticket if you believe this is incorrect.");
+  }
+  const ordered = [...licenses].sort((a, b) => Number(Boolean(b.isUsable)) - Number(Boolean(a.isUsable)));
+  const embeds = ordered.slice(0, 10).map((license, index) => {
+    const description = license.fullKey
+      ? `\`\`\`text\n${license.fullKey}\n\`\`\``
+      : "This older key was issued before secure key recovery was enabled. Staff must reissue it before the complete value can be shown.";
+    const fields = [
+      { name: "Status", value: licenseStatusText(license), inline: true },
+      { name: "Expires", value: licenseExpiryText(license), inline: true },
+      { name: "Devices", value: `${license.deviceCount}/${license.maxDevices}`, inline: true }
+    ];
+    if (license.plan === "trial" && license.activationDurationSeconds) {
+      fields.splice(1, 0, {
+        name: "Timed access",
+        value: durationText(license.activationDurationSeconds),
+        inline: true
+      });
+    }
+    const builder = new EmbedBuilder()
+      .setColor(license.isUsable ? COLORS.green : COLORS.yellow)
+      .setTitle(`${license.plan === "lifetime" ? "Lifetime" : "Trial"} Quilted Tweaks key`)
+      .setDescription(description)
+      .addFields(...fields);
+    if (license.activatedAt) builder.addFields({ name: "First activated", value: discordTime(license.activatedAt), inline: true });
+    if (index === 0) builder.setAuthor({ name: "PRIVATE — do not share your Quilted Tweaks key with anyone" });
+    return builder;
+  });
+  await interaction.editReply({
+    content: "⚠️ **Keep this DM private. Never send your key to another person, post it in a server, or show it on stream.**",
+    embeds,
+    allowedMentions: { parse: [] }
+  });
+}
+
+export async function handleWhatsMyTrialKey(interaction) {
+  if (interaction.inGuild()) {
+    return interaction.reply({
+      content: "For your security, open my Discord profile, press **Message**, and use `/whatsmytrialkey` in our private DM.",
+      ephemeral: true
+    });
+  }
+
+  await interaction.deferReply();
+  const result = await api(`/v1/admin/users/${interaction.user.id}/website-trial/reveal`, {
+    actor: `discord-trial-self:${interaction.user.id}`
+  });
+
+  if (!result.claimed) {
+    return interaction.editReply(
+      "No Quilted Tweaks timed key is linked to your Discord account. Ask staff for help if you purchased timed access."
+    );
+  }
+
+  const trial = result.trial;
+  if (!trial) {
+    return interaction.editReply(
+      "Your Discord account has a recorded timed key, but its license record is no longer recoverable. Please open a support ticket so staff can review it."
+    );
+  }
+
+  if (!trial.fullKey) {
+    return interaction.editReply(
+      "Your timed key was found, but the complete key cannot be decrypted. Please open a support ticket so staff can securely reissue it."
+    );
+  }
+
+  const fields = [
+    { name: "Status", value: licenseStatusText(trial), inline: true },
+    { name: "Trial length", value: durationText(trial.activationDurationSeconds), inline: true },
+    { name: "Expires", value: licenseExpiryText(trial), inline: true }
+  ];
+  if (trial.activatedAt) fields.push({ name: "First activated", value: discordTime(trial.activatedAt), inline: true });
+
+  const trialEmbed = new EmbedBuilder()
+    .setColor(trial.isUsable ? COLORS.green : COLORS.yellow)
+    .setAuthor({ name: "PRIVATE — your Quilted Tweaks timed key" })
+    .setTitle("Your Quilted Tweaks timed key")
+    .setDescription(`\`\`\`text\n${trial.fullKey}\n\`\`\``)
+    .addFields(...fields)
+    .setFooter({ text: "The trial countdown starts only after the key is successfully activated in the Quilted Tweaks app." });
+
+  await interaction.editReply({
+    content: "⚠️ **Keep this DM private. Do not share this key or show it on stream.**",
+    embeds: [trialEmbed],
+    allowedMentions: { parse: [] }
+  });
+}
+
+export async function announceReleaseOnce(client) {
+  if (!config.updatesChannelId || !config.releaseVersion) return true;
+  try {
+    const channel = await client.channels.fetch(config.updatesChannelId);
+    if (!channel || typeof channel.send !== "function") throw new Error("updates channel is not writable");
+    const releaseKey = `${config.releaseComponents}:${config.releaseVersion}:${config.releaseNotes}`.slice(0, 500);
+    const claimed = await api("/v1/admin/discord/releases/claim", {
+      method: "POST",
+      actor: "discord-bot",
+      body: JSON.stringify({
+        releaseKey,
+        guildId: config.guildId,
+        channelId: config.updatesChannelId,
+        version: config.releaseVersion,
+        components: config.releaseComponents,
+        notes: config.releaseNotes
+      })
+    });
+    if (!claimed.claimed) return true;
+    await channel.send({
+      embeds: [new EmbedBuilder()
+        .setColor(COLORS.blue)
+        .setTitle(`Quilted Tweaks update — v${config.releaseVersion}`)
+        .setDescription(config.releaseNotes)
+        .addFields({ name: "Components", value: config.releaseComponents })
+        .setFooter({ text: `Quilted Tweaks automatic release announcement • ${config.releaseVersion}` })
+        .setTimestamp()],
+      allowedMentions: { parse: [] }
+    });
+    return true;
+  } catch (error) {
+    console.error("[release-announcement]", error.message || error);
+    return false;
+  }
+}

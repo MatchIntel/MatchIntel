@@ -1,0 +1,559 @@
+import { Client, GatewayIntentBits, REST, Routes } from "discord.js";
+import { config } from "./config.js";
+import { commands, publicCommands } from "./commands.js";
+import { api } from "./api.js";
+import { canUse, accessLevel } from "./access.js";
+import { createSalesHandlers, SALES_ADMIN_COMMANDS } from './sales.js';
+import { createWebsiteKeyHandlers } from './websiteKeys.js';
+import { WEBSITE_KEY_COMMAND_NAMES } from './websiteKeyCommands.js';
+import { COLORS, discordTime, durationText, embed, licenseExpiryText, licenseFields, licenseLabel, truncate } from "./format.js";
+import {
+  announceReleaseOnce,
+  handleGuildMemberAdd,
+  handlePublishUpdate,
+  handlePaymentReminder,
+  handlePaymentMethodCommand,
+  handlePaymentSafetyMessage,
+  handleSendThisMessage,
+  handleSetupTickets,
+  handleSetupWelcome,
+  handleTestWelcome,
+  handleTicketButton,
+  handleWhatsMyKey,
+  handleWhatsMyTrialKey
+} from "./community.js";
+
+const ADMIN_COMMANDS = new Set([
+  ...SALES_ADMIN_COMMANDS,
+  ...WEBSITE_KEY_COMMAND_NAMES,
+  "revokekey", "revokeuser", "restorekey", "convertkey", "transferkey",
+  "deletekey", "reissuekey", "extendkey", "extendallkeys", "maintenance", "setversion", "auditlog",
+  "setupwelcome", "testwelcome", "setuptickets"
+]);
+const OWNER_ONLY_COMMANDS = new Set(["deleteallkeys", "setversion", "forceupdate", "sendthismessage", "publishupdate", "paymentreminder"]);
+
+const rest = new REST({ version: "10" }).setToken(config.token);
+await Promise.all([
+  rest.put(Routes.applicationGuildCommands(config.clientId, config.guildId), { body: commands }),
+  rest.put(Routes.applicationCommands(config.clientId), { body: publicCommands })
+]);
+
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages]
+});
+
+function username(user) {
+  return user.globalName || user.username;
+}
+
+async function deny(interaction, message) {
+  const payload = { content: message, ephemeral: true };
+  if (interaction.deferred || interaction.replied) return interaction.editReply(payload);
+  return interaction.reply(payload);
+}
+
+async function handleGenKey(interaction) {
+  const target = interaction.options.getUser("user", true);
+  if (target.bot) throw new Error("Keys cannot be linked to bot accounts.");
+  const plan = interaction.options.getString("plan", true);
+  const trialDays = interaction.options.getInteger("trial_days") || config.defaultTrialDays;
+  const maxDevices = interaction.options.getInteger("devices") || 1;
+  const note = interaction.options.getString("note") || "";
+  const result = await api("/v1/admin/licenses", {
+    method: "POST",
+    actor: interaction.user.id,
+    body: JSON.stringify({
+      plan, trialDays, maxDevices, note,
+      discordUserId: target.id,
+      discordUsername: username(target),
+      issuedByDiscordId: interaction.user.id
+    })
+  });
+  const expires = licenseExpiryText(result.license);
+  const customerFields = [
+    { name: "License key", value: `\`${result.licenseKey}\`` },
+    { name: "Plan", value: result.license.plan, inline: true },
+    { name: "Devices", value: String(result.license.maxDevices), inline: true },
+    { name: "Expires", value: expires, inline: true },
+    { name: "Linked Discord account", value: `<@${target.id}>` },
+    { name: "Keep this private", value: "Do not post or share this key. It is linked to your Discord account." }
+  ];
+  if (result.license.plan === "trial") {
+    customerFields.splice(3, 0, {
+      name: "Timed access",
+      value: durationText(result.license.activationDurationSeconds),
+      inline: true
+    });
+    customerFields.push({
+      name: "When the timer starts",
+      value: "Only after the key is successfully activated in the Quilted Tweaks app for the first time."
+    });
+  }
+  const customerEmbed = embed("Your Quilted Tweaks license", customerFields, COLORS.purple);
+  let delivery = "Sent by DM.";
+  try { await target.send({ embeds: [customerEmbed] }); }
+  catch { delivery = "DM failed. Copy the key below and send it securely."; }
+  return interaction.editReply({ embeds: [embed("Quilted Tweaks key generated", [
+    { name: "Customer", value: `${target} (\`${target.id}\`)` },
+    { name: "Key", value: `\`${result.licenseKey}\`` },
+    { name: "License ID", value: `\`${result.license.id}\`` },
+    { name: "Plan", value: result.license.plan, inline: true },
+    ...(result.license.plan === "trial" ? [{
+      name: "Timed access",
+      value: durationText(result.license.activationDurationSeconds),
+      inline: true
+    }] : []),
+    { name: "Devices", value: String(result.license.maxDevices), inline: true },
+    { name: "Expires", value: expires, inline: true },
+    { name: "Delivery", value: delivery }
+  ], COLORS.green)] });
+}
+
+async function handleKeyInfo(interaction) {
+  const reference = interaction.options.getString("reference", true);
+  const result = await api("/v1/admin/keyinfo", {
+    method: "POST",
+    actor: interaction.user.id,
+    body: JSON.stringify({ reference })
+  });
+
+  if (result.licenses.length === 1) {
+    return interaction.editReply({ embeds: [embed(
+      result.matchType === "device" ? "Quilted Tweaks key found by Device ID" : "Quilted Tweaks key information",
+      licenseFields(result.licenses[0], { showRecoveryNote: true }),
+      COLORS.blue
+    )] });
+  }
+
+  const fields = result.licenses.slice(0, 10).map((license, index) => ({
+    name: `License ${index + 1}`,
+    value: truncate([
+      license.fullKey ? `Key: \`${license.fullKey}\`` : `Key: \`${license.keyPrefix}…\` (legacy; use /reissuekey)`,
+      `ID: \`${license.id}\``,
+      `Plan: ${license.plan} • Status: ${license.isUsable ? "Active" : license.status}`,
+      `Owner: ${license.discordUserId ? `<@${license.discordUserId}>` : "Unlinked"}`
+    ].join("\n"), 1024)
+  }));
+  return interaction.editReply({ embeds: [embed(
+    `Device ID is linked to ${result.licenses.length} licenses`,
+    fields,
+    COLORS.yellow
+  )] });
+}
+
+async function handleReissueKey(interaction) {
+  const reference = interaction.options.getString("reference", true);
+  const confirmation = interaction.options.getString("confirmation", true);
+  const result = await api("/v1/admin/licenses/reissue", {
+    method: "POST",
+    actor: interaction.user.id,
+    body: JSON.stringify({ reference, confirmation })
+  });
+  return interaction.editReply({ embeds: [embed("Quilted Tweaks key reissued", [
+    ...licenseFields(result.license),
+    { name: "Important", value: "The old key no longer activates new devices. Existing device bindings were kept." }
+  ], COLORS.green)] });
+}
+
+async function handleFindUser(interaction) {
+  const target = interaction.options.getUser("user", true);
+  const result = await api(`/v1/admin/users/${target.id}/licenses`, { actor: interaction.user.id });
+  const lines = result.licenses.slice(0, 20).map(licenseLabel);
+  return interaction.editReply({ embeds: [embed(`Keys linked to ${username(target)}`, [
+    { name: "Discord account", value: `${target} (\`${target.id}\`)` },
+    { name: `Licenses (${result.licenses.length})`, value: truncate(lines.join("\n") || "No licenses found.", 4000) }
+  ], lines.length ? COLORS.blue : COLORS.yellow)] });
+}
+
+async function handleListKeys(interaction) {
+  const status = interaction.options.getString("status") || "";
+  const plan = interaction.options.getString("plan") || "";
+  const limit = interaction.options.getInteger("limit") || 15;
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (status) params.set("status", status);
+  if (plan) params.set("plan", plan);
+  const result = await api(`/v1/admin/licenses?${params}`, { actor: interaction.user.id });
+  const lines = result.licenses.map(license => `${licenseLabel(license)}${license.discordUserId ? ` • <@${license.discordUserId}>` : " • Unlinked"}`);
+  return interaction.editReply({ embeds: [embed("Recent Quilted Tweaks keys", [
+    { name: `Results (${result.licenses.length})`, value: truncate(lines.join("\n") || "No licenses found.", 4000) }
+  ])] });
+}
+
+async function handleResetDevices(interaction) {
+  if (interaction.options.getSubcommand() === "user") {
+    const target = interaction.options.getUser("user", true);
+    const result = await api(`/v1/admin/users/${target.id}/reset-devices`, {
+      method: "POST", actor: interaction.user.id, body: "{}"
+    });
+    return interaction.editReply({ embeds: [embed("User devices reset", [
+      { name: "Customer", value: `${target} (\`${target.id}\`)` },
+      { name: "Licenses affected", value: String(result.licensesAffected), inline: true },
+      { name: "Devices removed", value: String(result.devicesRemoved), inline: true },
+      { name: "Sessions revoked", value: String(result.refreshTokensRevoked), inline: true },
+      { name: "Result", value: "The customer can activate Quilted Tweaks again immediately." }
+    ], COLORS.green)] });
+  }
+  const ref = interaction.options.getString("license", true);
+  const result = await api(`/v1/admin/licenses/${encodeURIComponent(ref)}/reset-devices`, {
+    method: "POST", actor: interaction.user.id, body: "{}"
+  });
+  return interaction.editReply({ embeds: [embed("License devices reset", [
+    { name: "License ID", value: `\`${result.license.id}\`` },
+    { name: "Owner", value: result.license.discordUserId ? `<@${result.license.discordUserId}>` : "Unlinked" },
+    { name: "Devices removed", value: String(result.devicesRemoved), inline: true },
+    { name: "Sessions revoked", value: String(result.refreshTokensRevoked), inline: true }
+  ], COLORS.green)] });
+}
+
+async function handleDevices(interaction) {
+  const ref = interaction.options.getString("license", true);
+  const result = await api(`/v1/admin/licenses/${encodeURIComponent(ref)}/devices`, { actor: interaction.user.id });
+  const lines = result.devices.map((device, index) =>
+    `**${index + 1}. ${device.name}**\n${device.hash} • Last used ${discordTime(device.lastSeenAt)}`
+  );
+  return interaction.editReply({ embeds: [embed("Bound devices", [
+    { name: "License", value: `\`${result.license.id}\`` },
+    { name: `Devices (${result.devices.length}/${result.license.maxDevices})`, value: truncate(lines.join("\n\n") || "No devices are currently bound.", 4000) }
+  ])] });
+}
+
+async function handleRevokeKey(interaction) {
+  const ref = interaction.options.getString("license", true);
+  const reason = interaction.options.getString("reason", true);
+  const result = await api(`/v1/admin/licenses/${encodeURIComponent(ref)}/revoke`, {
+    method: "POST", actor: interaction.user.id, body: JSON.stringify({ reason })
+  });
+  return interaction.editReply({ embeds: [embed("Key revoked", licenseFields(result.license), COLORS.red)] });
+}
+
+async function handleRevokeUser(interaction) {
+  const target = interaction.options.getUser("user", true);
+  const reason = interaction.options.getString("reason", true);
+  const result = await api(`/v1/admin/users/${target.id}/revoke`, {
+    method: "POST", actor: interaction.user.id, body: JSON.stringify({ reason })
+  });
+  return interaction.editReply({ embeds: [embed("User licenses revoked", [
+    { name: "Customer", value: `${target} (\`${target.id}\`)` },
+    { name: "Licenses revoked", value: String(result.licensesRevoked), inline: true },
+    { name: "Reason", value: reason }
+  ], COLORS.red)] });
+}
+
+async function handleRestore(interaction) {
+  const ref = interaction.options.getString("license", true);
+  const result = await api(`/v1/admin/licenses/${encodeURIComponent(ref)}/restore`, {
+    method: "POST", actor: interaction.user.id, body: "{}"
+  });
+  return interaction.editReply({ embeds: [embed("Key restored", licenseFields(result.license), COLORS.green)] });
+}
+
+async function handleConvert(interaction) {
+  const ref = interaction.options.getString("license", true);
+  const result = await api(`/v1/admin/licenses/${encodeURIComponent(ref)}/convert-lifetime`, {
+    method: "POST", actor: interaction.user.id, body: "{}"
+  });
+  return interaction.editReply({ embeds: [embed("Key converted to lifetime", licenseFields(result.license), COLORS.purple)] });
+}
+
+async function handleTransfer(interaction) {
+  const ref = interaction.options.getString("license", true);
+  const target = interaction.options.getUser("user", true);
+  if (target.bot) throw new Error("Keys cannot be transferred to bot accounts.");
+  const result = await api(`/v1/admin/licenses/${encodeURIComponent(ref)}/transfer`, {
+    method: "POST",
+    actor: interaction.user.id,
+    body: JSON.stringify({ discordUserId: target.id, discordUsername: username(target) })
+  });
+  return interaction.editReply({ embeds: [embed("Key ownership transferred", licenseFields(result.license), COLORS.purple)] });
+}
+
+async function handleDeleteKey(interaction) {
+  if (interaction.options.getString("confirmation", true) !== "DELETE KEY") {
+    throw new Error("Confirmation must exactly equal DELETE KEY.");
+  }
+  const ref = interaction.options.getString("license", true);
+  const result = await api(`/v1/admin/licenses/${encodeURIComponent(ref)}`, {
+    method: "DELETE", actor: interaction.user.id, body: JSON.stringify({ confirmation: "DELETE KEY" })
+  });
+  return interaction.editReply({ embeds: [embed("Key permanently deleted", [
+    { name: "License ID", value: `\`${result.deleted.id}\`` },
+    { name: "Key prefix", value: `\`${result.deleted.keyPrefix}…\`` },
+    { name: "Owner", value: result.deleted.discordUserId ? `<@${result.deleted.discordUserId}>` : "Unlinked" },
+    { name: "Devices deleted", value: String(result.deleted.devicesDeleted), inline: true },
+    { name: "Sessions deleted", value: String(result.deleted.refreshTokensDeleted), inline: true },
+    { name: "Warning", value: "This deletion is permanent and cannot be restored." }
+  ], COLORS.red)] });
+}
+
+async function handleDeleteAll(interaction) {
+  const confirmation = interaction.options.getString("confirmation", true);
+  if (confirmation !== "DELETE ALL KEYS") throw new Error("Confirmation must exactly equal DELETE ALL KEYS.");
+  const scope = interaction.options.getString("scope", true);
+  const result = await api("/v1/admin/licenses/bulk-delete", {
+    method: "POST",
+    actor: interaction.user.id,
+    timeoutMs: 60000,
+    body: JSON.stringify({ scope, confirmation })
+  });
+  return interaction.editReply({ embeds: [embed("Bulk key deletion completed", [
+    { name: "Scope", value: result.scope, inline: true },
+    { name: "Licenses deleted", value: String(result.licensesDeleted), inline: true },
+    { name: "Devices deleted", value: String(result.devicesDeleted), inline: true },
+    { name: "Refresh sessions deleted", value: String(result.refreshTokensDeleted), inline: true },
+    { name: "Warning", value: "Deleted keys are permanently removed and cannot be restored." }
+  ], COLORS.red)] });
+}
+
+async function handleExtendKey(interaction) {
+  const ref = interaction.options.getString("license", true);
+  const days = interaction.options.getInteger("days", true);
+  const result = await api(`/v1/admin/licenses/${encodeURIComponent(ref)}/extend`, {
+    method: "POST", actor: interaction.user.id, body: JSON.stringify({ days })
+  });
+  return interaction.editReply({ embeds: [embed(`Trial extended by ${days} days`, licenseFields(result.license), COLORS.green)] });
+}
+
+async function handleExtendAll(interaction) {
+  const days = interaction.options.getInteger("days", true);
+  const scope = interaction.options.getString("scope", true);
+  const result = await api("/v1/admin/licenses/bulk-extend", {
+    method: "POST", actor: interaction.user.id, timeoutMs: 60000,
+    body: JSON.stringify({ days, scope })
+  });
+  return interaction.editReply({ embeds: [embed("Bulk trial extension completed", [
+    { name: "Scope", value: result.scope, inline: true },
+    { name: "Days added", value: String(result.days), inline: true },
+    { name: "Licenses extended", value: String(result.licensesExtended), inline: true },
+    { name: "Previously expired", value: String(result.previouslyExpired), inline: true },
+    { name: "Revoked included", value: String(result.revokedIncluded), inline: true },
+    { name: "Note", value: "Lifetime keys were skipped because they never expire. Extending a revoked key does not restore it." }
+  ], COLORS.green)] });
+}
+
+async function handleMaintenance(interaction) {
+  const result = await api("/v1/admin/maintenance", {
+    method: "POST",
+    actor: interaction.user.id,
+    body: JSON.stringify({
+      enabled: interaction.options.getBoolean("enabled", true),
+      message: interaction.options.getString("message") || undefined
+    })
+  });
+  return interaction.editReply({ embeds: [embed("Maintenance updated", [
+    { name: "State", value: result.enabled ? "Enabled" : "Disabled", inline: true },
+    { name: "Message", value: result.message || "No message" },
+    { name: "Result", value: result.note }
+  ], result.enabled ? COLORS.yellow : COLORS.green)] });
+}
+
+async function handleSetVersion(interaction) {
+  const minimumVersion = interaction.options.getString("minimum", true).trim();
+  const latestVersion = (interaction.options.getString("latest") || minimumVersion).trim();
+  const forceUpdate = interaction.options.getBoolean("force_update", true);
+  const updateUrl = interaction.options.getString("update_url") || "";
+  const message = interaction.options.getString("message") || "";
+  const result = await api("/v1/admin/version", {
+    method: "POST",
+    actor: interaction.user.id,
+    body: JSON.stringify({ minimumVersion, latestVersion, forceUpdate, updateUrl, message })
+  });
+  const version = result.version;
+  return interaction.editReply({ embeds: [embed("Quilted Tweaks version control updated", [
+    { name: "Minimum allowed", value: `\`${version.minimumVersion}\``, inline: true },
+    { name: "Latest available", value: `\`${version.latestVersion}\``, inline: true },
+    { name: "Force update", value: version.forceUpdate ? "Enabled" : "Disabled", inline: true },
+    { name: "Update URL", value: version.updateUrl || "Not configured" },
+    { name: "User message", value: version.message },
+    { name: "Important", value: "Quilted Tweaks activation and periodic license checks enforce these version settings." }
+  ], version.forceUpdate ? COLORS.red : COLORS.green)] });
+}
+
+async function handleForceUpdate(interaction) {
+  if(accessLevel(interaction)!=="owner")throw new Error("Only configured owner IDs can use /forceupdate.");
+  const enabled=interaction.options.getBoolean("enabled",true);
+  const version=interaction.options.getString("version")?.trim();
+  const updateUrl=interaction.options.getString("update_url")?.trim();
+  const message=interaction.options.getString("message")?.trim();
+  if(enabled&&(!version||!updateUrl))throw new Error("When enabling, provide version and update_url. Upload the release before requiring it.");
+  const result=await api("/v1/admin/force-update",{method:"POST",actor:interaction.user.id,body:JSON.stringify({enabled,version,updateUrl,message})});
+  const state=result.version;
+  return interaction.editReply({embeds:[embed(enabled?"Update required":"Update requirement released",[
+    {name:"Required version",value:state.requiredVersion,inline:true},
+    {name:"Force update",value:state.forceUpdate?"Enabled":"Disabled",inline:true},
+    {name:"Download",value:state.updateUrl||"Not configured"},
+    {name:"Message",value:state.message},
+    {name:"Client behavior",value:"Supporting clients check at startup and about once a minute while connected. Active temporary tweaks restore before the update screen. Older clients enforce the version on their next license check."}
+  ],enabled?COLORS.yellow:COLORS.green)]});
+}
+
+async function handleVersionStatus(interaction) {
+  const result = await api("/v1/admin/version", { actor: interaction.user.id });
+  const version = result.version;
+  return interaction.editReply({ embeds: [embed("Quilted Tweaks version control", [
+    { name: "Minimum allowed", value: `\`${version.minimumVersion}\``, inline: true },
+    { name: "Latest available", value: `\`${version.latestVersion}\``, inline: true },
+    { name: "Force update", value: version.forceUpdate ? "Enabled" : "Disabled", inline: true },
+    { name: "Update URL", value: version.updateUrl || "Not configured" },
+    { name: "Message", value: version.message },
+    { name: "Last changed", value: version.updatedAt ? discordTime(version.updatedAt) : "Using Railway defaults" }
+  ], version.forceUpdate ? COLORS.yellow : COLORS.blue)] });
+}
+
+async function handleSystemStatus(interaction) {
+  const result = await api("/v1/admin/status", { actor: interaction.user.id });
+  return interaction.editReply({ embeds: [embed("Quilted Tweaks system status", [
+    { name: "Backend", value: result.status, inline: true },
+    { name: "Latest version", value: result.version, inline: true },
+    { name: "Minimum version", value: result.minimumVersion, inline: true },
+    { name: "Force update", value: result.forceUpdate ? "Enabled" : "Disabled", inline: true },
+    { name: "Maintenance", value: result.maintenance ? "Enabled" : "Disabled", inline: true },
+    { name: "Total licenses", value: String(result.totalLicenses), inline: true },
+    { name: "Active licenses", value: String(result.activeLicenses), inline: true },
+    { name: "Lifetime", value: String(result.activeLifetime), inline: true },
+    { name: "Trials", value: String(result.activeTrial), inline: true },
+    { name: "Revoked", value: String(result.revokedLicenses), inline: true },
+    { name: "Discord linked", value: String(result.linkedLicenses), inline: true },
+    { name: "Website keys", value: String(result.websiteLicenses ?? 0), inline: true },
+    { name: "Devices", value: String(result.devices), inline: true },
+    { name: "Sessions", value: String(result.sessions), inline: true }
+  ], COLORS.green)] });
+}
+
+async function handleAuditLog(interaction) {
+  const params = new URLSearchParams({ limit: String(interaction.options.getInteger("limit") || 10) });
+  const action = interaction.options.getString("action");
+  if (action) params.set("action", action);
+  const result = await api(`/v1/admin/audit?${params}`, { actor: interaction.user.id });
+  const lines = result.entries.map(entry =>
+    `**${entry.action}** • ${discordTime(entry.created_at)}\nActor: \`${entry.actor || "unknown"}\` • Target: \`${entry.target || "none"}\``
+  );
+  return interaction.editReply({ embeds: [embed("Recent Quilted Tweaks audit log", [
+    { name: `Entries (${result.entries.length})`, value: truncate(lines.join("\n\n") || "No entries found.", 4000) }
+  ], COLORS.yellow)] });
+}
+
+async function handleHelp(interaction) {
+  return interaction.editReply({ embeds: [embed("Quilted Tweaks Helper commands", [
+    { name: "Everyone (bot DMs)", value: "`/whatsmykey` privately shows all linked keys. `/whatsmytrialkey` recovers the exact latest timed key linked to your account." },
+    { name: "Staff", value: "`/genkey` `/keyinfo` `/finduser` `/listkeys` `/resetdevices` `/devices` `/versionstatus` `/systemstatus`" },
+    { name: "Admin", value: "`/reissuekey` `/revokekey` `/revokeuser` `/restorekey` `/convertkey` `/transferkey` `/deletekey` `/extendkey` `/extendallkeys` `/maintenance` `/auditlog` `/setupwelcome` `/testwelcome` `/setuptickets`" },
+    { name: "Sales", value: "Staff: `/confirm` `/products`\nAdmin/owner: `/addproduct` `/editproduct` `/dashboard` `/sales` `/voidsale` `/expense` `/expenses` `/voidexpense`\nAll sales replies are private. Amounts are USD." },
+    { name: "Website key stock (admin/owner)", value: "`/genwebsitekeys` generates 1–1000 one-PC keys without a Discord customer and sends a private TXT. `/websitebatches` lists batches; `/exportwebsitekeys` recovers a batch." },
+    { name: "Owner only", value: "`/deleteallkeys` `/setversion` `/forceupdate` `/sendthismessage` `/publishupdate` `/paymentreminder`" },
+    { name: "Your access", value: accessLevel(interaction) },
+    { name: "Deletion safety", value: "Revoking disables a key but keeps its record. Deleting permanently removes it and cannot be undone." }
+  ])] });
+}
+
+const salesHandlers = createSalesHandlers();
+const handlers = {
+  ...salesHandlers,
+  ...createWebsiteKeyHandlers(),
+  genkey: handleGenKey,
+  keyinfo: handleKeyInfo,
+  reissuekey: handleReissueKey,
+  finduser: handleFindUser,
+  listkeys: handleListKeys,
+  resetdevices: handleResetDevices,
+  devices: handleDevices,
+  revokekey: handleRevokeKey,
+  revokeuser: handleRevokeUser,
+  restorekey: handleRestore,
+  convertkey: handleConvert,
+  transferkey: handleTransfer,
+  deletekey: handleDeleteKey,
+  deleteallkeys: handleDeleteAll,
+  extendkey: handleExtendKey,
+  extendallkeys: handleExtendAll,
+  maintenance: handleMaintenance,
+  setversion: handleSetVersion,
+  forceupdate: handleForceUpdate,
+  versionstatus: handleVersionStatus,
+  systemstatus: handleSystemStatus,
+  auditlog: handleAuditLog,
+  setupwelcome: handleSetupWelcome,
+  testwelcome: handleTestWelcome,
+  setuptickets: handleSetupTickets,
+  paymentreminder: handlePaymentReminder,
+  sendthismessage: handleSendThisMessage,
+  publishupdate: handlePublishUpdate,
+  bothelp: handleHelp
+};
+
+client.on("interactionCreate", async interaction => {
+  try {
+    if (interaction.isAutocomplete()) return await salesHandlers.autocomplete(interaction);
+    if (interaction.isButton() && interaction.customId.startsWith("mi_ticket_")) {
+      await handleTicketButton(interaction);
+      return;
+    }
+    if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === "whatsmykey") {
+      await handleWhatsMyKey(interaction);
+      return;
+    }
+    if (interaction.commandName === "whatsmytrialkey") {
+      await handleWhatsMyTrialKey(interaction);
+      return;
+    }
+
+    if (!canUse(interaction, "staff")) {
+      return deny(interaction, "You need the configured Quilted Tweaks staff role to use this bot command.");
+    }
+    if (ADMIN_COMMANDS.has(interaction.commandName) && !canUse(interaction, "admin")) {
+      return deny(interaction, "This command requires the configured Quilted Tweaks admin role.");
+    }
+    if (OWNER_ONLY_COMMANDS.has(interaction.commandName) && accessLevel(interaction) !== "owner") {
+      return deny(interaction, "This command is restricted to configured Quilted Tweaks owner IDs.");
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+    const handler = handlers[interaction.commandName];
+    if (!handler) return interaction.editReply("Unknown command.");
+    await handler(interaction);
+  } catch (error) {
+    console.error(`Interaction ${interaction.commandName || interaction.customId || "unknown"} failed`, error);
+    const code = error.code ? ` (${error.code})` : "";
+    const message = `Error${code}: ${error.message || "Unknown error"}`;
+    if (interaction.deferred || interaction.replied) await interaction.editReply(message).catch(() => {});
+    else await interaction.reply({ content: message, ephemeral: interaction.inGuild() }).catch(() => {});
+  }
+});
+
+client.on("guildMemberAdd", member => {
+  void handleGuildMemberAdd(member);
+});
+
+client.on("messageCreate", message => {
+  void (async () => {
+    if (await handlePaymentMethodCommand(message)) return;
+    await handlePaymentSafetyMessage(message);
+  })();
+});
+
+client.once("ready", async () => {
+  console.log(`Quilted Tweaks Helper 0.10.0 logged in as ${client.user.tag}`);
+  console.log(`Registered ${commands.length} guild commands in ${config.guildId}`);
+  client.user.setPresence({ activities: [{ name: "Quilted Tweaks Support" }], status: "online" });
+  try {
+    const guild = client.guilds.cache.get(config.guildId) || await client.guilds.fetch(config.guildId);
+    const me = guild.members.me || await guild.members.fetchMe();
+    if (me && me.displayName !== config.botDisplayName) {
+      await me.setNickname(config.botDisplayName, "Quilted Tweaks support branding");
+    }
+  } catch (error) {
+    console.warn(`[branding] Could not set server nickname to ${config.botDisplayName}:`, error.message || error);
+  }
+  if (!config.staffRoles.size) console.warn("BOT_STAFF_ROLE_IDS is empty. Only owners/admin-role users can access commands.");
+  let releaseTimer = null;
+  const attemptReleaseAnnouncement = async () => {
+    const finished = await announceReleaseOnce(client);
+    if (finished && releaseTimer) clearInterval(releaseTimer);
+  };
+  void attemptReleaseAnnouncement();
+  releaseTimer = setInterval(() => void attemptReleaseAnnouncement(), 60_000);
+  releaseTimer.unref();
+});
+
+client.login(config.token);
